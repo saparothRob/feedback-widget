@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>feedback-widget fixture</title>
+  <style>
+    body { font: 16px system-ui; margin: 0; padding: 40px; }
+    /* Deliberately hostile host CSS: if any of this reaches the widget, the
+       shadow boundary is not doing its job. */
+    button { background: lime !important; font-size: 40px !important; border: 8px dashed red !important; }
+    input, textarea { display: none !important; }
+    * { letter-spacing: 3px; }
+  </style>
+</head>
+<body>
+  <h1>Host page</h1>
+  <p id="secret" class="feedback-mask">super secret value</p>
+  <button id="host-button" type="button">A host button</button>
+  <script src="/dist/global.iife.js"></script>
+  <script>
+    document.getElementById("host-button").addEventListener("click", function () {});
+
+    window.__mounted = window.NervaFeedback.mount({
+      endpoint: location.origin,
+      publicKey: "test_key_123",
+      user: { id: "u-1", name: "Test Person" },
+      metadata: { release: "1.2.3" },
+      screenshot: "none",
+      replay: { lookbackMs: 60000 }
+    }).then(function (handle) {
+      window.__handle = handle;
+      window.__transport = handle.transport;
+
+      // Everything below has to happen AFTER the recorder is running - mount is
+      // async, and a recorder cannot capture what already happened.
+      console.log("fixture activity");
+      console.warn("a warning too");
+      document.getElementById("host-button").click();
+      document.title = "changed after mount";
+      return Promise.all([
+        fetch("/some/host/api?token=SHOULD_BE_REDACTED").catch(function () {}),
+        fetch("/another/host/call").catch(function () {})
+      ]);
+    }).then(function () {
+      // The network plugin batches through a PerformanceObserver; give it a beat
+      // to emit before the test drives the form.
+      return new Promise(function (r) { setTimeout(r, 900); });
+    }).then(function () {
+      window.__ready = true;
+    });
+  </script>
+</body>
+</html>
