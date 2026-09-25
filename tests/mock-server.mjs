@@ -52,6 +52,24 @@ export function startMockServer(mode) {
       });
     }
 
+    if (path === "/api/feedback-collect/config") {
+      if (mode !== "legacy") return json(404, { error: "not_found" });
+      return json(200, {
+        enabled: true,
+        accentColor: "#2a7aef",
+        icon: "megaphone",
+        position: "top-right",
+        buttonLabel: "Tell us",
+        buttonShape: "pill",
+        buttonPulse: false,
+        captureConsole: true,
+        captureNetwork: true,
+        replayLookbackSeconds: 30,
+        collectEmail: true,
+        kinds: ["bug", "idea", "praise"],
+      });
+    }
+
     if (req.method === "POST") {
       return void readBody().then((raw) => {
         let parsed = raw;

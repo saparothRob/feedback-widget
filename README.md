@@ -79,14 +79,13 @@ At mount the widget asks for `/api/v1/feedback-widgets/by-key/{key}/config`.
 
 `handle.transport` tells you which one you got. See
 [docs/server-requirements.md](docs/server-requirements.md) for what each contract
-needs from the server — **including two gaps in the current Nerva server that stop
-cross-origin embedding from working at all**.
+needs from the server, and which parts of it Nerva implements today.
 
 | | legacy | v1 |
 |---|---|---|
 | Report + replay | yes | yes |
 | Console / network capture | yes | yes |
-| Server-driven theme & toggles | no | yes |
+| Server-driven theme & toggles | yes | yes |
 | Custom fields | parked in `metadata` | first-class |
 | File attachments | dropped (names kept in `metadata`) | yes |
 | Chunked replay upload | no | yes |

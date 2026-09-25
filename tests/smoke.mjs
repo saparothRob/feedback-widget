@@ -51,6 +51,14 @@ async function run(mode) {
       const label = await launcher.getAttribute("aria-label");
       check("server config drives the theme", label === "Report", `label=${label}`);
       check("server config drives the position", (await launcher.getAttribute("class")).includes("bottom-left"));
+    } else {
+      // The legacy contract gained its own config route; without it the widget
+      // would silently fall back to package defaults ("Feedback", bottom-right).
+      const label = await launcher.getAttribute("aria-label");
+      check("legacy config route drives the theme", label === "Tell us", `label=${label}`);
+      check("legacy config route drives the position", (await launcher.getAttribute("class")).includes("top-right"));
+      const kinds = await page.locator(".fb-kind").count();
+      check("legacy config route drives the kind list", kinds === 3, `${kinds} kinds`);
     }
 
     await launcher.click();

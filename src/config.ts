@@ -9,11 +9,12 @@
  *
  * The probe also decides which wire contract is in play. A server that answers
  * the v1 config route speaks v1; anything else (404, 501, network refusal) is
- * assumed to be the legacy `/api/feedback-collect/*` generation, which has no
- * public config route at all and therefore runs on defaults plus host options.
+ * assumed to be the legacy `/api/feedback-collect/*` generation, which is then
+ * asked for its own config route. A legacy server too old to have even that
+ * runs on defaults plus host options.
  */
 import type { FeedbackOptions, ResolvedConfig } from "./types.js";
-import type { V1CustomField, V1WidgetConfig } from "./wire.js";
+import type { LegacyWidgetConfig, V1CustomField, V1WidgetConfig } from "./wire.js";
 import { LEGACY_KINDS, V1_KINDS } from "./wire.js";
 import { getJsonOrNull } from "./transport/http.js";
 
@@ -49,31 +50,39 @@ function pick<T extends string>(value: unknown, allowed: Set<string>, fallback: 
   return typeof value === "string" && allowed.has(value) ? (value as T) : fallback;
 }
 
-function legacyConfig(opts: FeedbackOptions): ResolvedConfig {
+/**
+ * `remote` is null when the server has no config route at all - an older legacy
+ * deployment. Host options then sit on top of the package defaults, which is the
+ * best anyone can do without the server's opinion.
+ */
+function legacyConfig(remote: LegacyWidgetConfig | null, opts: FeedbackOptions): ResolvedConfig {
   const theme = opts.theme ?? {};
+  const remoteAccent = remote !== null && HEX.test(remote.accentColor ?? "") ? remote.accentColor : DEFAULTS.accent;
   return {
-    enabled: true,
+    enabled: remote === null || remote.enabled !== false,
     theme: {
-      accent: theme.accent && HEX.test(theme.accent) ? theme.accent : DEFAULTS.accent,
-      icon: pick(theme.icon, ICONS, DEFAULTS.icon),
-      position: pick(theme.position, POSITIONS, DEFAULTS.position),
-      buttonLabel: (theme.buttonLabel ?? DEFAULTS.buttonLabel).slice(0, 32),
-      buttonShape: pick(theme.buttonShape, SHAPES, DEFAULTS.buttonShape),
-      buttonPulse: theme.buttonPulse ?? DEFAULTS.buttonPulse,
+      accent: theme.accent && HEX.test(theme.accent) ? theme.accent : remoteAccent,
+      icon: theme.icon ?? pick(remote?.icon, ICONS, DEFAULTS.icon),
+      position: theme.position ?? pick(remote?.position, POSITIONS, DEFAULTS.position),
+      buttonLabel: (theme.buttonLabel ?? remote?.buttonLabel ?? DEFAULTS.buttonLabel).slice(0, 32),
+      buttonShape: theme.buttonShape ?? pick(remote?.buttonShape, SHAPES, DEFAULTS.buttonShape),
+      buttonPulse: theme.buttonPulse ?? remote?.buttonPulse === true,
     },
     capture: {
-      console: opts.console?.enabled ?? true,
-      network: opts.network?.enabled ?? true,
+      console: opts.console?.enabled ?? remote?.captureConsole !== false,
+      network: opts.network?.enabled ?? remote?.captureNetwork !== false,
     },
     replay: {
       enabled: opts.replay?.enabled ?? true,
-      lookbackMs: opts.replay?.lookbackMs ?? lookbackMs(undefined),
+      lookbackMs: opts.replay?.lookbackMs ?? lookbackMs(remote?.replayLookbackSeconds),
     },
-    kinds: opts.kinds ?? [...LEGACY_KINDS],
+    kinds:
+      opts.kinds ??
+      (Array.isArray(remote?.kinds) && remote.kinds.length > 0 ? remote.kinds : [...LEGACY_KINDS]),
     // The legacy server has no custom-field schema, so there is nothing to
     // render and nothing that would survive the round trip if there were.
     customFields: [],
-    collectEmail: opts.collectEmail ?? true,
+    collectEmail: opts.collectEmail ?? remote?.collectEmail !== false,
     // `feedback_items` has no attachment table; files would have nowhere to land.
     attachments: false,
     supportsChunks: false,
@@ -128,9 +137,19 @@ function v1Config(remote: V1WidgetConfig, opts: FeedbackOptions): ResolvedConfig
 }
 
 export async function bootstrap(opts: FeedbackOptions): Promise<Bootstrap> {
-  const url = `${opts.endpoint}/api/v1/feedback-widgets/by-key/${encodeURIComponent(opts.publicKey)}/config`;
-  const remote = await getJsonOrNull<V1WidgetConfig>(url, opts.publicKey);
-  return remote === null
-    ? { transport: "legacy", config: legacyConfig(opts) }
-    : { transport: "v1", config: v1Config(remote, opts) };
+  const key = encodeURIComponent(opts.publicKey);
+
+  const v1 = await getJsonOrNull<V1WidgetConfig>(
+    `${opts.endpoint}/api/v1/feedback-widgets/by-key/${key}/config`,
+    opts.publicKey,
+  );
+  if (v1 !== null) return { transport: "v1", config: v1Config(v1, opts) };
+
+  // Legacy, but recent enough to describe itself. One extra round trip, and only
+  // on servers that answered 404 above.
+  const legacy = await getJsonOrNull<LegacyWidgetConfig>(
+    `${opts.endpoint}/api/feedback-collect/config`,
+    opts.publicKey,
+  );
+  return { transport: "legacy", config: legacyConfig(legacy, opts) };
 }

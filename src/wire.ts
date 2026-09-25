@@ -83,6 +83,24 @@ export interface LegacyItemCreate {
   metadata: string;
 }
 
+// ── legacy: GET /api/feedback-collect/config ─────────────────────────────────
+
+/** camelCase, like the rest of the legacy contract. 404 on an unknown key. */
+export interface LegacyWidgetConfig {
+  enabled: boolean;
+  accentColor: string;
+  icon: string;
+  position: string;
+  buttonLabel: string;
+  buttonShape: string;
+  buttonPulse: boolean;
+  captureConsole: boolean;
+  captureNetwork: boolean;
+  replayLookbackSeconds: number;
+  collectEmail: boolean;
+  kinds: string[];
+}
+
 // ── v1: GET /api/v1/feedback-widgets/by-key/{key}/config ─────────────────────
 
 export const V1_KINDS = ["bug", "idea", "question", "praise"] as const;
