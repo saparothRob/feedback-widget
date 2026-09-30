@@ -12,7 +12,7 @@
  */
 import type { FeedbackHandle, FeedbackOptions, OutgoingReport, UserHint } from "./types.js";
 import type { Draft, SubmitContext, SubmitResult } from "./transport/index.js";
-import { bootstrap } from "./config.js";
+import { bootstrap, normaliseEndpoint } from "./config.js";
 import { startRecorder, type Recorder } from "./recorder.js";
 import { selectTransport } from "./transport/index.js";
 import { createShell } from "./ui/shell.js";
@@ -34,10 +34,6 @@ function inertHandle(reason: string): FeedbackHandle {
     transport: reason,
     version: VERSION,
   };
-}
-
-function normaliseEndpoint(raw: string): string {
-  return raw.replace(/\/+$/, "");
 }
 
 export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHandle> {

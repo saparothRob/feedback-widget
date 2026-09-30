@@ -10,8 +10,15 @@
  */
 import type { ConsoleEntry, NetworkEntry, WireEvent } from "./wire.js";
 
-const CONSOLE_PLUGIN = "rrweb/console@1";
-const NETWORK_PLUGIN = "rrweb/network@1";
+/** Plugin identifiers as rrweb writes them into `event.data.plugin`. Exported
+ *  so the react-native taps, which synthesise these events without rrweb, can
+ *  never drift from what this extractor matches. */
+export const CONSOLE_PLUGIN = "rrweb/console@1";
+export const NETWORK_PLUGIN = "rrweb/network@1";
+
+/** rrweb's `EventType.Plugin`, mirrored as a literal so this module - and the
+ *  react-native entry that shares it - never has to import rrweb for one enum. */
+export const PLUGIN_EVENT_TYPE = 6;
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -77,5 +84,5 @@ export function extractConsoleAndNetwork(events: WireEvent[]): Extracted {
 
 /** Events the replayer can actually render. Plugin events are data, not DOM. */
 export function playableEvents(events: WireEvent[]): WireEvent[] {
-  return events.filter((e) => e.type !== 6);
+  return events.filter((e) => e.type !== PLUGIN_EVENT_TYPE);
 }

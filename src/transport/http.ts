@@ -66,7 +66,10 @@ export async function postJson<T>(
     "X-Feedback-Key": key,
   };
 
-  let payload: BodyInit = json;
+  // `string | ArrayBuffer` rather than the DOM-lib `BodyInit`: this module is
+  // shared with the react-native entry, whose consumers may compile without
+  // `lib.dom`, and both members are valid fetch bodies everywhere.
+  let payload: string | ArrayBuffer = json;
   if (!opts.noGzip && json.length > GZIP_THRESHOLD_BYTES && canGzip()) {
     const bytes = await gzipBytes(json);
     // Copy into a fresh ArrayBuffer so the BodyInit type is exact regardless of
@@ -84,8 +87,12 @@ export async function postJson<T>(
   return (await res.json()) as T;
 }
 
+/** A web `File`, typed structurally so no DOM-only name leaks into the
+ *  declarations the react-native entry drags in. */
+export type NamedBlob = Blob & { name: string };
+
 /** POST one file as `multipart/form-data`, field name `file`. */
-export async function postFile<T>(url: string, key: string, file: File): Promise<T> {
+export async function postFile<T>(url: string, key: string, file: NamedBlob): Promise<T> {
   const form = new FormData();
   form.append("file", file, file.name);
   const res = await fetch(url, {

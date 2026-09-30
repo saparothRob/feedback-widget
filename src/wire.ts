@@ -188,3 +188,22 @@ export interface WireError {
   detail?: string;
   max?: number;
 }
+
+// ── Ingest traffic the capture layers must never record ──────────────────────
+
+/** Path prefixes of the widget's own ingest routes, across both contracts. */
+export const FEEDBACK_INGEST_PATHS = ["/api/feedback-collect/", "/api/v1/feedback"] as const;
+
+/**
+ * The ignore list every capture layer (web recorder, react-native fetch tap)
+ * builds from. Matches the feedback PATHS, not the endpoint origin: the host
+ * app and the Nerva server are frequently the same origin, and ignoring the
+ * whole origin would silently suppress every request worth recording.
+ */
+export function ingestIgnoreList(endpoint: string, extra: (string | RegExp)[]): (string | RegExp)[] {
+  return [
+    ...FEEDBACK_INGEST_PATHS.map((path) => `${endpoint}${path}`),
+    ...FEEDBACK_INGEST_PATHS,
+    ...extra,
+  ];
+}

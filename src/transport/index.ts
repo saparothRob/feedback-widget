@@ -9,17 +9,20 @@
 import type { ResolvedConfig, UserHint } from "../types.js";
 import type { WireEvent } from "../wire.js";
 import type { TransportKind } from "../config.js";
+import type { NamedBlob } from "./http.js";
 import { createV1Transport } from "./v1.js";
 import { createLegacyTransport } from "./legacy.js";
 
-/** What the modal produced, before any contract has had an opinion about it. */
+/** What the modal produced, before any contract has had an opinion about it.
+ *  `files` is structurally `File[]` on the web; the react-native entry, which
+ *  has no `File`, always sends it empty. */
 export interface Draft {
   kind: string;
   title: string;
   message: string;
   email: string | null;
   answers: Record<string, unknown>;
-  files: File[];
+  files: NamedBlob[];
   screenshot: string | null;
 }
 

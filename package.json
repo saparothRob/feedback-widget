@@ -1,6 +1,6 @@
 {
   "name": "@nerva/feedback-widget",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Embeddable feedback button, modal and session recorder for Nerva feedback projects.",
   "license": "MIT",
   "type": "module",
@@ -15,6 +15,16 @@
       "require": "./dist/index.cjs"
     },
     "./global": "./dist/global.iife.js",
+    "./react-native": {
+      "types": "./dist/react-native/index.d.ts",
+      "import": "./dist/react-native.js",
+      "require": "./dist/react-native.cjs"
+    },
+    "./react-native/client": {
+      "types": "./dist/react-native/client.d.ts",
+      "import": "./dist/react-native-client.js",
+      "require": "./dist/react-native-client.cjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -31,7 +41,7 @@
     "build": "npm run clean && npm run build:js && npm run build:types",
     "check": "npm run typecheck && npm run lint && npm run build && npm test",
     "prepublishOnly": "npm run check",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/smoke.mjs && node tests/rn-smoke.mjs"
   },
   "dependencies": {
     "@rrweb/rrweb-plugin-console-record": "^2.1.6",
@@ -39,16 +49,26 @@
     "rrweb": "^2.1.6"
   },
   "peerDependencies": {
-    "html2canvas": "^1.4.1"
+    "html2canvas": "^1.4.1",
+    "react": ">=18",
+    "react-native": ">=0.73"
   },
   "peerDependenciesMeta": {
     "html2canvas": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native": {
       "optional": true
     }
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
     "@types/node": "^24.10.1",
+    "@types/react": "^19.3.0",
+    "@types/react-native": "^0.72.8",
     "esbuild": "^0.27.3",
     "eslint": "^9.9.1",
     "globals": "^15.9.0",

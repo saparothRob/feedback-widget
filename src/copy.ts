@@ -1,4 +1,9 @@
-/** Every user-facing string the widget renders. One home, no inline copy. */
+/**
+ * Every user-facing string the widget renders. One home, no inline copy.
+ *
+ * Lives in the shared core (not `ui/`) because both faces of the package - the
+ * web modal and the react-native sheet - render the same words.
+ */
 
 export const COPY = {
   kindGroupLabel: "What kind of feedback?",
@@ -26,7 +31,26 @@ export const COPY = {
   privacy:
     "Sending this shares a recording of your recent activity on this page, including console and network " +
     "activity. Password fields and anything marked private are never recorded.",
+  /** Mobile captures no replay, so the web line would over-claim. */
+  privacyMobile:
+    "Sending this shares recent console and network activity from the app, along with what you wrote here.",
   teleReplay: "REPLAY",
   teleConsole: "CONSOLE",
   teleNetwork: "NETWORK",
 } as const;
+
+export const KIND_LABELS: Record<string, string> = {
+  bug: "Bug",
+  idea: "Idea",
+  question: "Question",
+  praise: "Praise",
+  feedback: "Feedback",
+};
+
+export const KIND_HINTS: Record<string, string> = {
+  bug: "Something is broken",
+  idea: "Something could be better",
+  question: "Something is unclear",
+  praise: "Something works well",
+  feedback: "Anything else",
+};

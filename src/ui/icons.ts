@@ -16,27 +16,12 @@ export const ICON_PATHS: Record<string, string[]> = {
   ],
 };
 
-/** Per-kind glyph in the kind picker. Falls back to the chat bubble. */
+/** Per-kind glyph in the kind picker. Falls back to the chat bubble.
+ *  The kind LABELS and HINTS are copy, and live in `../copy.ts`. */
 export const KIND_ICONS: Record<string, string> = {
   bug: "bug",
   idea: "lightbulb",
   question: "life-ring",
   praise: "star",
   feedback: "chat",
-};
-
-export const KIND_LABELS: Record<string, string> = {
-  bug: "Bug",
-  idea: "Idea",
-  question: "Question",
-  praise: "Praise",
-  feedback: "Feedback",
-};
-
-export const KIND_HINTS: Record<string, string> = {
-  bug: "Something is broken",
-  idea: "Something could be better",
-  question: "Something is unclear",
-  praise: "Something works well",
-  feedback: "Anything else",
 };

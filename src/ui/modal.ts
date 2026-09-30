@@ -3,9 +3,10 @@ import type { ResolvedConfig } from "../types.js";
 import type { Draft, SubmitResult } from "../transport/index.js";
 import { capture, screenshotAvailable } from "../screenshot.js";
 import { createFieldSet, type FieldsHost } from "./fields.js";
-import { COPY } from "./copy.js";
+import { COPY, KIND_HINTS, KIND_LABELS } from "../copy.js";
+import { DONE_DISMISS_MS, MAX_TITLE_LENGTH } from "../limits.js";
 import { el, svg, trapFocus } from "./dom.js";
-import { ICON_PATHS, KIND_HINTS, KIND_ICONS, KIND_LABELS } from "./icons.js";
+import { ICON_PATHS, KIND_ICONS } from "./icons.js";
 
 export interface ModalDeps {
   config: ResolvedConfig;
@@ -26,7 +27,6 @@ export interface Modal {
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_TITLE = 200;
 const REF_LENGTH = 8;
 const MS_PER_SECOND = 1000;
 
@@ -62,7 +62,7 @@ export function createModal(deps: ModalDeps): Modal {
     class: "fb-input",
     id: "fb-title",
     type: "text",
-    maxlength: MAX_TITLE,
+    maxlength: MAX_TITLE_LENGTH,
     placeholder: COPY.titlePlaceholder,
   });
 
@@ -226,7 +226,7 @@ export function createModal(deps: ModalDeps): Modal {
     );
     window.setTimeout(() => {
       if (open) close();
-    }, 2600);
+    }, DONE_DISMISS_MS);
   }
 
   function reset(): void {
@@ -339,7 +339,7 @@ export function createModal(deps: ModalDeps): Modal {
       }
       return deps.submit({
         kind,
-        title: titleInput.value.trim().slice(0, MAX_TITLE),
+        title: titleInput.value.trim().slice(0, MAX_TITLE_LENGTH),
         message,
         email: (deps.knownEmail ?? emailInput.value.trim()) || null,
         answers: fields.collect(kind),

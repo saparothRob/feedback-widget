@@ -25,6 +25,11 @@ export interface Bootstrap {
   config: ResolvedConfig;
 }
 
+/** The endpoint option is documented as having no trailing slash; forgive one anyway. */
+export function normaliseEndpoint(raw: string): string {
+  return raw.replace(/\/+$/, "");
+}
+
 const POSITIONS = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const ICONS = new Set(["chat", "megaphone", "bug", "star", "lightbulb", "life-ring"]);
 const SHAPES = new Set(["circle", "pill"]);

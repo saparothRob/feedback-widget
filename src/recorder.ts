@@ -10,7 +10,7 @@
  * [lookback, 2 x lookback), and whatever is flushed always begins with a
  * Meta + FullSnapshot pair.
  */
-import { record, EventType } from "rrweb";
+import { record } from "rrweb";
 import type { eventWithTime } from "rrweb";
 import { getRecordConsolePlugin } from "@rrweb/rrweb-plugin-console-record";
 import { getRecordNetworkPlugin } from "@rrweb/rrweb-plugin-network-record";
@@ -18,6 +18,7 @@ import type { RecordPlugin, NetworkRequest } from "@rrweb/types";
 import type { LogLevel } from "@rrweb/rrweb-plugin-console-record";
 import type { ConsoleOptions, NetworkOptions, ReplayOptions } from "./types.js";
 import type { WireEvent } from "./wire.js";
+import { ingestIgnoreList } from "./wire.js";
 import { blockSelector, isForbiddenHeader, maskTextSelector, redactUrl } from "./redact.js";
 
 export interface RecorderConfig {
@@ -50,21 +51,11 @@ function matchesAny(url: string, patterns: (string | RegExp)[]): boolean {
 }
 
 function buildNetworkPlugin(cfg: RecorderConfig): RecordPlugin {
-  const ignore: (string | RegExp)[] = [
-    // Never record our own traffic. Without this the ingest POST - which carries
-    // the entire replay - shows up inside the next replay, and each report is
-    // meaningfully larger than the one before it.
-    //
-    // Match the feedback PATHS, not the endpoint origin. The host app and the
-    // Nerva server are frequently the same origin (they are for Nerva's own
-    // SPA), and ignoring the whole origin there would silently suppress every
-    // request worth recording.
-    `${cfg.endpoint}/api/feedback-collect/`,
-    `${cfg.endpoint}/api/v1/feedback`,
-    "/api/feedback-collect/",
-    "/api/v1/feedback",
-    ...(cfg.network.ignoreUrls ?? []),
-  ];
+  // Never record our own traffic. Without this the ingest POST - which carries
+  // the entire replay - shows up inside the next replay, and each report is
+  // meaningfully larger than the one before it. The path-not-origin reasoning
+  // lives with the list builder in `wire.ts`, shared with the react-native tap.
+  const ignore = ingestIgnoreList(cfg.endpoint, cfg.network.ignoreUrls ?? []);
 
   const wantHeaders = cfg.network.recordHeaders === true;
 
@@ -177,6 +168,3 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
     },
   };
 }
-
-/** Re-exported so the transports and the admin UI agree on what "not playable" means. */
-export const PLUGIN_EVENT_TYPE: number = EventType.Plugin;

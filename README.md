@@ -2,7 +2,9 @@
 
 Embeddable feedback button, modal and session recorder for Nerva feedback
 projects. Drop it into any browser app; reports, replays, console output and
-network activity land in that app's Nerva feedback project.
+network activity land in that app's Nerva feedback project. React Native apps
+get the same pipeline minus the replay through
+[`@nerva/feedback-widget/react-native`](#react-native--expo).
 
 ```
 npm install @nerva/feedback-widget
@@ -51,22 +53,31 @@ redeploying the app it is embedded in. The host app supplies only what it alone
 knows: who the user is, and what the build/tenant/release are.
 
 ```
-src/index.ts        conductor - composes everything, owns the lifecycle
+src/index.ts        web conductor - composes everything, owns the lifecycle
   config.ts         bootstrap: which contract, and what the operator configured
-  recorder.ts       rrweb behind a bounded buffer
+  copy.ts           every user-facing string, shared by both faces
+  limits.ts         form limits and timings, shared by both faces
+  recorder.ts       rrweb behind a bounded buffer                    (web only)
   redact.ts         non-configurable capture-time redaction
   extract.ts        splits console/network back out of the replay
-  screenshot.ts     optional DOM rasterisation
+  screenshot.ts     optional DOM rasterisation                       (web only)
   transport/        the only code that knows what the wire looks like
     v1.ts             /api/v1/feedback/*        (snake_case)
     legacy.ts         /api/feedback-collect/*   (camelCase, mirrors feedback.val)
     http.ts           gzip, multipart, typed errors
-  ui/               shadow-root shell, launcher, modal, custom fields
+  ui/               shadow-root shell, launcher, modal, custom fields (web only)
+  react-native/     the mobile face - headless client, sheet, launcher
 ```
 
 Everything above `transport/` is contract-agnostic. Adding a third server
 generation means adding a file there and a branch in `selectTransport`, and
 touching nothing else.
+
+The two entry points share the core and never each other's runtime: the web
+entry (`src/index.ts`) is the only path to rrweb, the shadow-DOM shell and
+html2canvas; the react-native entry (`src/react-native/`) is the only path to
+react and react-native, both externalised and declared as optional peers. A web
+app installs and bundles exactly what it did before.
 
 ### Two server contracts, chosen at mount
 
@@ -206,21 +217,162 @@ surfaces. Per app, the operator (or the host via `theme`) can override:
 
 ---
 
+## React Native / Expo
+
+The same package serves mobile apps through a second entry point. It speaks the
+same server contracts the web widget does - camelCase
+`/api/feedback-collect/config|session|item` against today's Nerva, the v1
+routes when a server grows them - so reports from an app land in the same
+feedback project, session-linked, next to the web ones.
+
+```
+npm install @nerva/feedback-widget
+```
+
+`react` and `react-native` are optional peer dependencies used only by this
+entry; your app already has them, and web consumers never install them.
+
+```tsx
+import { useEffect, useState } from "react";
+import {
+  createFeedbackClient,
+  FeedbackLauncher,
+  FeedbackSheet,
+  type FeedbackClient,
+} from "@nerva/feedback-widget/react-native";
+
+export function FeedbackHost() {
+  const [client, setClient] = useState<FeedbackClient | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let live: FeedbackClient | null = null;
+    void createFeedbackClient({
+      endpoint: "https://acme.nervaapp.com",
+      publicKey: "your-feedback-project-api-key",
+      user: { id: currentUser.id, email: currentUser.email, name: currentUser.name },
+      metadata: { release: appVersion },
+      screenName: "home",
+    }).then((c) => {
+      live = c;
+      setClient(c);
+    });
+    return () => live?.destroy();
+  }, []);
+
+  if (!client) return null;
+  return (
+    <>
+      <FeedbackLauncher client={client} onPress={() => setOpen(true)} />
+      <FeedbackSheet client={client} visible={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+```
+
+`<FeedbackSheet>` is the web modal's field set - kind chips from the server
+config, title, details, optional email - over an RN `Modal`, themed from the
+same server config (accent, radius, `skin`, `colorScheme` including `"auto"`
+via the OS appearance). `<FeedbackLauncher>` is the optional floating button; a
+settings row or a shake gesture opening the sheet works just as well.
+
+### The PawGate / PayGate pattern
+
+Apps that keep their API origin in Expo config feed the client the same way
+they feed their axios instance - and tell it where the user is from the
+navigation container, so reports say `app://settings/billing` instead of
+guessing:
+
+```ts
+// src/feedback.ts
+import { createFeedbackClient } from "@nerva/feedback-widget/react-native";
+
+export const feedback = createFeedbackClient({
+  endpoint: process.env.EXPO_PUBLIC_NERVA_URL ?? "http://localhost:9031",
+  publicKey: process.env.EXPO_PUBLIC_NERVA_FEEDBACK_KEY ?? "",
+  screenName: "root",
+});
+```
+
+```tsx
+// App.tsx — feed navigation state changes into the report context
+<NavigationContainer
+  ref={navigationRef}
+  onStateChange={() => {
+    const route = navigationRef.getCurrentRoute();
+    if (route) void feedback.then((c) => c.setScreen(route.name));
+  }}
+>
+```
+
+After a login, `client.identify({ id, email, name })`; per-screen context goes
+through `client.setMetadata({ ... })` - both merge, like the web handle.
+
+### Screenshots
+
+The package depends on no native module. If the app can rasterise itself -
+`react-native-view-shot` is the usual answer - hand the client a callback and
+every report carries the capture; without one, reports simply have no
+screenshot:
+
+```ts
+import { captureScreen } from "react-native-view-shot";
+
+const client = await createFeedbackClient({
+  endpoint,
+  publicKey,
+  captureScreenshot: () =>
+    captureScreen({ result: "data-uri", format: "jpg", quality: 0.8 }).catch(() => null),
+});
+```
+
+### What mobile does not capture
+
+- **No session replay.** rrweb records a DOM; there is none. The session is
+  still posted - console and network breadcrumbs, viewport, duration - with an
+  empty event stream, so the admin UI shows the context without a player.
+- **Console and network capture still work**, without rrweb: the client patches
+  the console methods and wraps `fetch` into rolling buffers (restored on
+  `destroy()`), honouring the server's capture toggles and the same
+  non-configurable URL redaction as the web recorder. Headers and bodies are
+  never recorded on mobile.
+- **No automatic screenshots** - only what your `captureScreenshot` returns.
+- **No file attachments and no custom fields** (legacy contract limits, same as
+  the web widget on that transport).
+
+### Headless
+
+Everything the sheet does goes through
+`@nerva/feedback-widget/react-native/client`, which imports no react at all -
+`createFeedbackClient(...)` → `submit({ kind, title, message, email?,
+screenshot? })` - for apps that already have their own feedback form and just
+want it to land in Nerva.
+
+---
+
 ## Development
 
 ```
 npm install
 npm run typecheck   # strict; there are no warnings, only errors
 npm run lint
-npm run build       # dist/index.js, dist/index.cjs, dist/global.iife.js, + .d.ts
-npm test            # real bundle, real browser, stand-in server, both contracts
+npm run build       # dist/index.js, dist/index.cjs, dist/global.iife.js,
+                    # dist/react-native{,-client}.{js,cjs}, + .d.ts
+npm test            # web: real bundle, real browser, stand-in server, both
+                    # contracts; then the react-native headless client in node
 ```
 
-`npm test` drives the built bundle in Chromium against a mock of both server
+`npm test` drives the built web bundle in Chromium against a mock of both server
 generations, and asserts the things a typecheck cannot: that the shadow boundary
 holds against hostile host CSS, that the replay is playable, that redaction
 happened at capture time, and that the right contract was chosen. Run
 `npm run build` first.
+
+`tests/rn-smoke.mjs` then exercises the shipped react-native client bundle in
+node (with `react-native` stubbed): the legacy session+item pair, breadcrumb
+capture and redaction, and that the bundle drags in no react and no rrweb. The
+RN **UI** components have no renderer in CI and get a types-compile check only
+(`npm run typecheck` covers them).
 
 `strict` plus `noUncheckedIndexedAccess` plus `exactOptionalPropertyTypes` is
 deliberate, and matches the server's `TreatWarningsAsErrors=true`. Fix the root
