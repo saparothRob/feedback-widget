@@ -11,7 +11,7 @@
  *   transport  -> the only code that knows what the wire looks like
  */
 import type { FeedbackHandle, FeedbackOptions, OutgoingReport, UserHint } from "./types.js";
-import type { Draft, SubmitContext } from "./transport/index.js";
+import type { Draft, SubmitContext, SubmitResult } from "./transport/index.js";
 import { bootstrap } from "./config.js";
 import { startRecorder, type Recorder } from "./recorder.js";
 import { selectTransport } from "./transport/index.js";
@@ -110,14 +110,14 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
     hostElement: shell.host,
     screenshotMode: opts.screenshot ?? "dom",
     knownEmail: user.email ?? null,
-    async submit(draft: Draft): Promise<void> {
+    async submit(draft: Draft): Promise<SubmitResult> {
       const ctx = context();
 
       // `onBeforeSend` is the host app's last word. It sees a normalised report
       // regardless of which contract is about to carry it, and returning `false`
       // cancels the send outright.
       const edited = opts.onBeforeSend ? opts.onBeforeSend(toReport(draft, ctx)) : undefined;
-      if (edited === false) return;
+      if (edited === false) return { id: null };
 
       const finalDraft: Draft = edited
         ? { ...draft, kind: edited.kind, title: edited.title, message: edited.message, email: edited.email, answers: edited.customFields, screenshot: edited.screenshot }
@@ -127,6 +127,7 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
       try {
         const result = await transport.submit(finalDraft, finalCtx);
         opts.onSubmitted?.(result);
+        return result;
       } catch (error) {
         opts.onError?.(error instanceof Error ? error : new Error(String(error)));
         throw error;
@@ -176,6 +177,8 @@ export type {
   OutgoingReport,
   UserHint,
   ThemeOptions,
+  WidgetSkin,
+  WidgetColorScheme,
   ReplayOptions,
   ConsoleOptions,
   NetworkOptions,

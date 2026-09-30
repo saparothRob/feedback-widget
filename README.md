@@ -151,7 +151,7 @@ that line without replacing it with something equally clear.
 | `publicKey` | — | **required**, the feedback project's api key |
 | `user` | `{}` | `{ id, email, name }` identity hints |
 | `metadata` | `{}` | arbitrary JSON, stored verbatim |
-| `theme` | server | `accent`, `icon`, `position`, `buttonLabel`, `buttonShape`, `buttonPulse` |
+| `theme` | server | `accent`, `icon`, `position`, `buttonLabel`, `buttonShape`, `buttonPulse`, `skin`, `colorScheme`, `radius`, `brandName`, `brandLogo`, `successMessage`, `loadFonts` |
 | `kinds` | server | must be a subset the server accepts |
 | `screenshot` | `"dom"` | `"dom"` needs the `html2canvas` peer; `"none"` hides the toggle |
 | `collectEmail` | `true` | ignored when `user.email` is set |
@@ -188,6 +188,21 @@ returns an inert handle whose `transport` is `"none"`.
 Everything renders inside a shadow root. The host app's stylesheet cannot reach
 in and break the dialog, and none of the widget's CSS escapes to restyle the host
 app. Theme it through the config, not through CSS.
+
+The default face is the Nerva register — Archivo display heading, IBM Plex Mono
+eyebrow, micro-labels and capture telemetry, the suite's light and dark
+surfaces. Per app, the operator (or the host via `theme`) can override:
+
+- `skin` — `"nerva"` (default) or `"plain"`, a quiet system-font dialog that
+  disappears into the host app
+- `colorScheme` — `"light"` (default), `"dark"`, or `"auto"` to follow the
+  visitor's OS
+- `radius` — panel corner radius in px (0–24, default 10); controls derive
+- `brandName` / `brandLogo` — the eyebrow line above the heading
+- `successMessage` — body text of the sent confirmation
+- `loadFonts` — the nerva skin loads Archivo / IBM Plex via one document-level
+  Google Fonts link; set `false` under a strict CSP and the skin rides its
+  system fallbacks
 
 ---
 

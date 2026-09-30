@@ -1,8 +1,9 @@
 /** The feedback dialog. */
 import type { ResolvedConfig } from "../types.js";
-import type { Draft } from "../transport/index.js";
+import type { Draft, SubmitResult } from "../transport/index.js";
 import { capture, screenshotAvailable } from "../screenshot.js";
 import { createFieldSet, type FieldsHost } from "./fields.js";
+import { COPY } from "./copy.js";
 import { el, svg, trapFocus } from "./dom.js";
 import { ICON_PATHS, KIND_HINTS, KIND_ICONS, KIND_LABELS } from "./icons.js";
 
@@ -13,7 +14,7 @@ export interface ModalDeps {
   hostElement: HTMLElement;
   screenshotMode: "dom" | "none";
   knownEmail: string | null;
-  submit(draft: Draft): Promise<void>;
+  submit(draft: Draft): Promise<SubmitResult>;
 }
 
 export interface Modal {
@@ -26,6 +27,21 @@ export interface Modal {
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TITLE = 200;
+const REF_LENGTH = 8;
+const MS_PER_SECOND = 1000;
+
+/** The telemetry strip: what the widget is actually capturing, in the
+ *  register's voice. Entries are data; rendering never branches per entry. */
+function telemetryEntries(config: ResolvedConfig): { text: string; dot: boolean }[] {
+  const lookbackSeconds = Math.round(config.replay.lookbackMs / MS_PER_SECOND);
+  return [
+    { on: config.replay.enabled, text: `${COPY.teleReplay} ${lookbackSeconds}S`, dot: true },
+    { on: config.capture.console, text: COPY.teleConsole, dot: false },
+    { on: config.capture.network, text: COPY.teleNetwork, dot: false },
+  ]
+    .filter((entry) => entry.on)
+    .map(({ text, dot }) => ({ text, dot }));
+}
 
 export function createModal(deps: ModalDeps): Modal {
   const { config } = deps;
@@ -40,20 +56,20 @@ export function createModal(deps: ModalDeps): Modal {
 
   // ── Nodes ────────────────────────────────────────────────────────────────
 
-  const kindRow = el("div", { class: "fb-kinds", role: "group", "aria-label": "What kind of feedback?" });
+  const kindRow = el("div", { class: "fb-kinds", role: "group", "aria-label": COPY.kindGroupLabel });
 
   const titleInput = el("input", {
     class: "fb-input",
     id: "fb-title",
     type: "text",
     maxlength: MAX_TITLE,
-    placeholder: "Short summary",
+    placeholder: COPY.titlePlaceholder,
   });
 
   const messageInput = el("textarea", {
     class: "fb-textarea",
     id: "fb-message",
-    placeholder: "What happened? What did you expect instead?",
+    placeholder: COPY.messagePlaceholder,
   });
 
   const emailInput = el("input", {
@@ -61,46 +77,57 @@ export function createModal(deps: ModalDeps): Modal {
     id: "fb-email",
     type: "email",
     autocomplete: "email",
-    placeholder: "you@example.com",
+    placeholder: COPY.emailPlaceholder,
   });
   const emailField = el("div", { class: "fb-field" }, [
-    el("label", { class: "fb-label", for: "fb-email", text: "Email (optional)" }),
+    el("label", { class: "fb-label", for: "fb-email", text: COPY.emailLabel }),
     emailInput,
-    el("p", { class: "fb-hint", text: "Only so someone can follow up with you." }),
+    el("p", { class: "fb-hint", text: COPY.emailHint }),
   ]);
 
   const shotCheck = el("input", { type: "checkbox", id: "fb-shot", checked: true });
-  const shotPreview = el("img", { class: "fb-shot", alt: "Screenshot preview", hidden: true });
+  const shotPreview = el("img", { class: "fb-shot", alt: COPY.screenshotAlt, hidden: true });
   const shotField = el("div", { class: "fb-field" }, [
-    el("label", { class: "fb-check", for: "fb-shot" }, [shotCheck, "Include a screenshot of this page"]),
+    el("label", { class: "fb-check", for: "fb-shot" }, [shotCheck, COPY.screenshotLabel]),
     shotPreview,
   ]);
 
   const fileInput = el("input", { type: "file", multiple: true, hidden: true });
   const fileList = el("div", { class: "fb-files" });
-  const fileButton = el("button", { class: "fb-link", type: "button", text: "+ Attach a file" });
+  const fileButton = el("button", { class: "fb-link", type: "button", text: COPY.attachLabel });
   const fileField = el("div", { class: "fb-field" }, [fileButton, fileList]);
 
   const errorLine = el("p", { class: "fb-error", role: "alert", hidden: true });
 
-  const privacy = el("p", {
-    class: "fb-privacy",
-    text:
-      "Sending this shares a recording of your recent activity on this page, including console and network " +
-      "activity. Password fields and anything marked private are never recorded.",
-  });
+  const privacy = el("p", { class: "fb-privacy", text: COPY.privacy });
 
-  const submitButton = el("button", { class: "fb-btn fb-btn-primary", type: "submit", text: "Send" });
-  const cancelButton = el("button", { class: "fb-btn fb-btn-ghost", type: "button", text: "Cancel" });
+  const submitButton = el("button", { class: "fb-btn fb-btn-primary", type: "submit", text: COPY.send });
+  const cancelButton = el("button", { class: "fb-btn fb-btn-ghost", type: "button", text: COPY.cancel });
+
+  const telemetry = el(
+    "div",
+    { class: "fb-telemetry", "aria-hidden": "true" },
+    telemetryEntries(config).map(({ text, dot }) =>
+      el("span", { class: "fb-tele" }, [
+        ...(dot ? [el("i", { class: "fb-tele-dot" })] : []),
+        text,
+      ]),
+    ),
+  );
 
   const body = el("div", { class: "fb-body" });
-  const foot = el("div", { class: "fb-foot" }, [cancelButton, submitButton]);
+  const foot = el("div", { class: "fb-foot" }, [telemetry, cancelButton, submitButton]);
 
-  const closeButton = el("button", { class: "fb-close", type: "button", "aria-label": "Close" }, [
+  const closeButton = el("button", { class: "fb-close", type: "button", "aria-label": COPY.closeLabel }, [
     svg(["M6 6l12 12M18 6L6 18"], 18),
   ]);
+  const brandRow = el("div", { class: "fb-brand-row" }, [
+    ...(config.theme.brandLogo === "" ? [] : [el("img", { class: "fb-brand-logo", src: config.theme.brandLogo, alt: "" })]),
+    el("span", { class: "fb-brand", text: config.theme.brandName }),
+    closeButton,
+  ]);
   const heading = el("h2", { class: "fb-title", id: "fb-heading", text: config.theme.buttonLabel });
-  const head = el("div", { class: "fb-head" }, [heading, closeButton]);
+  const head = el("div", { class: "fb-head" }, [brandRow, heading]);
 
   const form = el("form", { class: "fb-form", novalidate: true }, [body, foot]);
   const panel = el("div", {
@@ -139,7 +166,7 @@ export function createModal(deps: ModalDeps): Modal {
   function renderFiles(): void {
     fileList.replaceChildren();
     for (const [index, file] of files.entries()) {
-      const remove = el("button", { class: "fb-link", type: "button", "aria-label": `Remove ${file.name}` }, ["Remove"]);
+      const remove = el("button", { class: "fb-link", type: "button", "aria-label": `${COPY.removeLabel} ${file.name}` }, [COPY.removeLabel]);
       remove.addEventListener("click", () => {
         files = files.filter((_, i) => i !== index);
         renderFiles();
@@ -165,12 +192,12 @@ export function createModal(deps: ModalDeps): Modal {
     if (config.kinds.length > 1) rows.push(kindRow);
     rows.push(
       el("div", { class: "fb-field" }, [
-        el("label", { class: "fb-label", for: "fb-title", text: "Title" }),
+        el("label", { class: "fb-label", for: "fb-title", text: COPY.titleLabel }),
         titleInput,
       ]),
       el("div", { class: "fb-field" }, [
         el("label", { class: "fb-label", for: "fb-message" }, [
-          "Details",
+          COPY.detailsLabel,
           el("span", { class: "fb-req", text: "*", "aria-hidden": true }),
         ]),
         messageInput,
@@ -184,13 +211,17 @@ export function createModal(deps: ModalDeps): Modal {
     body.replaceChildren(...rows);
   }
 
-  function showDone(): void {
+  function showDone(id: string | null): void {
     head.hidden = true;
+    const ref = id === null ? [] : [
+      el("p", { class: "fb-done-ref", text: `${COPY.doneRefPrefix} ${id.replace(/-/g, "").slice(0, REF_LENGTH)}` }),
+    ];
     form.replaceChildren(
       el("div", { class: "fb-done" }, [
-        el("div", { class: "fb-done-mark" }, [svg(["M20 6L9 17l-5-5"], 40)]),
-        el("h2", { class: "fb-done-title", text: "Thanks — that's sent." }),
-        el("p", { class: "fb-done-text", text: "Someone will take a look at it." }),
+        el("div", { class: "fb-done-mark" }, [svg(["M20 6L9 17l-5-5"], 28)]),
+        el("h2", { class: "fb-done-title", text: COPY.doneTitle }),
+        el("p", { class: "fb-done-text", text: config.theme.successMessage }),
+        ...ref,
       ]),
     );
     window.setTimeout(() => {
@@ -208,7 +239,7 @@ export function createModal(deps: ModalDeps): Modal {
     shotPreview.hidden = true;
     shotCheck.checked = true;
     submitButton.disabled = false;
-    submitButton.textContent = "Send";
+    submitButton.textContent = COPY.send;
     head.hidden = false;
     kind = config.kinds[0] ?? "feedback";
     showError(null);
@@ -257,7 +288,7 @@ export function createModal(deps: ModalDeps): Modal {
     const picked = [...(fileInput.files ?? [])];
     const oversize = picked.find((f) => f.size > MAX_FILE_BYTES);
     if (oversize) {
-      showError(`${oversize.name} is larger than 10 MB.`);
+      showError(`${oversize.name} ${COPY.oversizeSuffix}`);
     } else {
       showError(null);
       files = [...files, ...picked].slice(0, MAX_FILES);
@@ -279,7 +310,7 @@ export function createModal(deps: ModalDeps): Modal {
 
     const message = messageInput.value.trim();
     if (message === "") {
-      showError("Tell us what happened before sending.");
+      showError(COPY.missingMessage);
       messageInput.setAttribute("aria-invalid", "true");
       messageInput.focus();
       return;
@@ -288,16 +319,16 @@ export function createModal(deps: ModalDeps): Modal {
 
     const missing = fields.validate(kind);
     if (missing !== null) {
-      showError(`${missing} is required.`);
+      showError(`${missing} ${COPY.requiredSuffix}`);
       return;
     }
 
     showError(null);
     sending = true;
     submitButton.disabled = true;
-    submitButton.textContent = "Sending…";
+    submitButton.textContent = COPY.sending;
 
-    const send = async (): Promise<void> => {
+    const send = async (): Promise<SubmitResult> => {
       if (deps.screenshotMode === "dom" && shotCheck.checked && shot === null) {
         // Captured at submit time, not at open time: the dialog is in the way
         // until the moment it is hidden for the capture.
@@ -306,7 +337,7 @@ export function createModal(deps: ModalDeps): Modal {
         open = true;
         overlay.hidden = false;
       }
-      await deps.submit({
+      return deps.submit({
         kind,
         title: titleInput.value.trim().slice(0, MAX_TITLE),
         message,
@@ -318,12 +349,12 @@ export function createModal(deps: ModalDeps): Modal {
     };
 
     void send().then(
-      () => showDone(),
+      (result) => showDone(result.id),
       (error: unknown) => {
         sending = false;
         submitButton.disabled = false;
-        submitButton.textContent = "Send";
-        showError(error instanceof Error ? error.message : "That didn't send. Try again?");
+        submitButton.textContent = COPY.send;
+        showError(error instanceof Error ? error.message : COPY.sendFailed);
       },
     );
   });

@@ -5,6 +5,17 @@ export type ButtonPosition = "bottom-right" | "bottom-left" | "top-right" | "top
 export type ButtonShape = "circle" | "pill";
 export type ButtonIcon = "chat" | "megaphone" | "bug" | "star" | "lightbulb" | "life-ring";
 
+/**
+ * `"nerva"` is the full Nerva register: Archivo display heading, IBM Plex Mono
+ * eyebrow and telemetry, the suite's light/dark surfaces. `"plain"` strips the
+ * brand voice back to a quiet system-font dialog for host apps that want the
+ * widget to disappear into their own design.
+ */
+export type WidgetSkin = "nerva" | "plain";
+
+/** `"auto"` follows the visitor's OS via `prefers-color-scheme`. */
+export type WidgetColorScheme = "light" | "dark" | "auto";
+
 export interface ThemeOptions {
   accent?: string;
   icon?: ButtonIcon;
@@ -12,6 +23,22 @@ export interface ThemeOptions {
   buttonLabel?: string;
   buttonShape?: ButtonShape;
   buttonPulse?: boolean;
+  skin?: WidgetSkin;
+  colorScheme?: WidgetColorScheme;
+  /** Panel corner radius in px, clamped to 0–24. Controls derive from it. */
+  radius?: number;
+  /** Eyebrow text above the dialog heading. Rendered uppercase by the skin. */
+  brandName?: string;
+  /** Small logo URL shown beside the eyebrow. Empty string for none. */
+  brandLogo?: string;
+  /** Body text of the sent confirmation. */
+  successMessage?: string;
+  /**
+   * The `"nerva"` skin loads Archivo / IBM Plex from Google Fonts with a single
+   * document-level stylesheet link. Set false on hosts whose CSP forbids it;
+   * the skin then falls back to system faces.
+   */
+  loadFonts?: boolean;
 }
 
 export interface UserHint {

@@ -85,7 +85,9 @@ export interface LegacyItemCreate {
 
 // ── legacy: GET /api/feedback-collect/config ─────────────────────────────────
 
-/** camelCase, like the rest of the legacy contract. 404 on an unknown key. */
+/** camelCase, like the rest of the legacy contract. 404 on an unknown key.
+ *  The skin block is optional: servers from before the register redesign
+ *  simply do not send it, and the package defaults apply. */
 export interface LegacyWidgetConfig {
   enabled: boolean;
   accentColor: string;
@@ -99,6 +101,12 @@ export interface LegacyWidgetConfig {
   replayLookbackSeconds: number;
   collectEmail: boolean;
   kinds: string[];
+  skin?: string;
+  colorScheme?: string;
+  radius?: number;
+  brandName?: string;
+  brandLogo?: string;
+  successMessage?: string;
 }
 
 // ── v1: GET /api/v1/feedback-widgets/by-key/{key}/config ─────────────────────
@@ -135,6 +143,12 @@ export interface V1WidgetConfig {
   custom_fields: V1CustomField[];
   supports_replay_chunks?: boolean;
   kinds?: string[];
+  skin?: string;
+  color_scheme?: string;
+  radius?: number;
+  brand_name?: string;
+  brand_logo?: string;
+  success_message?: string;
 }
 
 // ── v1: POST /api/v1/feedback/ingest ─────────────────────────────────────────

@@ -28,17 +28,35 @@ export interface Bootstrap {
 const POSITIONS = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 const ICONS = new Set(["chat", "megaphone", "bug", "star", "lightbulb", "life-ring"]);
 const SHAPES = new Set(["circle", "pill"]);
+const SKINS = new Set(["nerva", "plain"]);
+const SCHEMES = new Set(["light", "dark", "auto"]);
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+const MAX_BRAND_NAME = 40;
+const MAX_SUCCESS_MESSAGE = 200;
+const MAX_RADIUS = 24;
+
 const DEFAULTS = {
-  accent: "#7c3aed",
+  accent: "#6A3AB2",
   icon: "chat",
   position: "bottom-right",
   buttonLabel: "Feedback",
   buttonShape: "circle",
   buttonPulse: false,
   lookbackSeconds: 60,
+  skin: "nerva",
+  colorScheme: "light",
+  radius: 10,
+  brandName: "Nerva Feedback",
+  brandLogo: "",
+  successMessage: "Someone will take a look at it.",
 } as const;
+
+function radiusOf(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(MAX_RADIUS, Math.round(value)))
+    : fallback;
+}
 
 /** Clamped the same way the server clamps it, so the two cannot disagree. */
 function lookbackMs(seconds: number | undefined): number {
@@ -67,6 +85,13 @@ function legacyConfig(remote: LegacyWidgetConfig | null, opts: FeedbackOptions):
       buttonLabel: (theme.buttonLabel ?? remote?.buttonLabel ?? DEFAULTS.buttonLabel).slice(0, 32),
       buttonShape: theme.buttonShape ?? pick(remote?.buttonShape, SHAPES, DEFAULTS.buttonShape),
       buttonPulse: theme.buttonPulse ?? remote?.buttonPulse === true,
+      skin: theme.skin ?? pick(remote?.skin, SKINS, DEFAULTS.skin),
+      colorScheme: theme.colorScheme ?? pick(remote?.colorScheme, SCHEMES, DEFAULTS.colorScheme),
+      radius: theme.radius !== undefined ? radiusOf(theme.radius, DEFAULTS.radius) : radiusOf(remote?.radius, DEFAULTS.radius),
+      brandName: (theme.brandName ?? remote?.brandName ?? DEFAULTS.brandName).slice(0, MAX_BRAND_NAME),
+      brandLogo: theme.brandLogo ?? remote?.brandLogo ?? DEFAULTS.brandLogo,
+      successMessage: (theme.successMessage ?? remote?.successMessage ?? DEFAULTS.successMessage).slice(0, MAX_SUCCESS_MESSAGE),
+      loadFonts: theme.loadFonts ?? true,
     },
     capture: {
       console: opts.console?.enabled ?? remote?.captureConsole !== false,
@@ -119,6 +144,13 @@ function v1Config(remote: V1WidgetConfig, opts: FeedbackOptions): ResolvedConfig
       buttonLabel: (theme.buttonLabel ?? remote.button_label ?? DEFAULTS.buttonLabel).slice(0, 32),
       buttonShape: theme.buttonShape ?? pick(remote.button_shape, SHAPES, DEFAULTS.buttonShape),
       buttonPulse: theme.buttonPulse ?? remote.button_pulse === true,
+      skin: theme.skin ?? pick(remote.skin, SKINS, DEFAULTS.skin),
+      colorScheme: theme.colorScheme ?? pick(remote.color_scheme, SCHEMES, DEFAULTS.colorScheme),
+      radius: theme.radius !== undefined ? radiusOf(theme.radius, DEFAULTS.radius) : radiusOf(remote.radius, DEFAULTS.radius),
+      brandName: (theme.brandName ?? remote.brand_name ?? DEFAULTS.brandName).slice(0, MAX_BRAND_NAME),
+      brandLogo: theme.brandLogo ?? remote.brand_logo ?? DEFAULTS.brandLogo,
+      successMessage: (theme.successMessage ?? remote.success_message ?? DEFAULTS.successMessage).slice(0, MAX_SUCCESS_MESSAGE),
+      loadFonts: theme.loadFonts ?? true,
     },
     capture: {
       console: opts.console?.enabled ?? remote.capture_console !== false,
