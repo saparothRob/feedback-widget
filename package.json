@@ -41,7 +41,8 @@
     "build": "npm run clean && npm run build:js && npm run build:types",
     "check": "npm run typecheck && npm run lint && npm run build && npm test",
     "prepublishOnly": "npm run check",
-    "test": "node tests/smoke.mjs && node tests/rn-smoke.mjs"
+    "test": "node tests/smoke.mjs && node tests/rn-smoke.mjs",
+    "prepare": "npm run clean && npm run build:js && npm run build:types"
   },
   "dependencies": {
     "@rrweb/rrweb-plugin-console-record": "^2.1.6",
