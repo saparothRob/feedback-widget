@@ -2,7 +2,7 @@ import type { TrailEntry } from "./wire.js";
 import { ingestIgnoreList } from "./wire.js";
 import { COPY } from "./copy.js";
 import { PERSIST_THROTTLE_MS, RAGE_CLICK_COUNT, RAGE_CLICK_WINDOW_MS, TRAIL_LABEL_MAX } from "./limits.js";
-import { blockSelector, maskTextSelector, redactedPath } from "./redact.js";
+import { WIDGET_HOST_SELECTOR, blockSelector, maskTextSelector, redactedPath } from "./redact.js";
 import { matchesAny, methodOf, urlOf } from "./requests.js";
 import { SLOTS, clearSlot, readSlot, writeSlot } from "./tab.js";
 import {
@@ -39,7 +39,6 @@ interface SourceContext {
 
 type Source = (ctx: SourceContext) => Uninstall;
 
-const WIDGET_HOST = "[data-nerva-feedback]";
 const CLICK_TARGETS =
   "button,a,summary,label,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=tab],[role=checkbox],[role=option]";
 const FIELD_TAGS: ReadonlySet<string> = new Set(["INPUT", "SELECT", "TEXTAREA"]);
@@ -153,7 +152,7 @@ const clicks: Source = ({ record, privateSelector }) => {
 
   const onClick = guarded((event: MouseEvent) => {
     const target = event.target;
-    if (!(target instanceof Element) || target.closest(WIDGET_HOST) !== null) return;
+    if (!(target instanceof Element) || target.closest(WIDGET_HOST_SELECTOR) !== null) return;
     const node = target.closest(CLICK_TARGETS) ?? target;
     const now = Date.now();
     const label = clickLabel(node, privateSelector);

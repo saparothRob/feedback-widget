@@ -71,6 +71,7 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
   let recorder: Recorder | null = null;
   if (config.replay.enabled) {
     recorder = startRecorder({
+      publicKey: opts.publicKey,
       lookbackMs: config.replay.lookbackMs,
       retentionMs,
       sessionId,

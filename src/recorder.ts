@@ -21,12 +21,14 @@ import type { LogLevel } from "@rrweb/rrweb-plugin-console-record";
 import type { ConsoleOptions, NetworkOptions, ReplayOptions } from "./types.js";
 import type { WireEvent } from "./wire.js";
 import { ingestIgnoreList } from "./wire.js";
-import { blockSelector, isForbiddenHeader, maskTextSelector, redactUrl } from "./redact.js";
+import { WIDGET_HOST_SELECTOR, blockSelector, isForbiddenHeader, maskTextSelector, redactUrl } from "./redact.js";
 import { matchesAny } from "./requests.js";
+import { startMethodLedger, type MethodLedger } from "./method-ledger.js";
 import { CHECKOUT_EVERY_MS, PERSIST_THROTTLE_MS, REPLAY_BYTE_CAP } from "./limits.js";
-import { openStore, type DroppedGeneration, type ReplayStore, type StoredChunk } from "./persist.js";
+import { clearSpill, openStore, readSpill, spill, type DroppedGeneration, type ReplayStore, type StoredChunk } from "./persist.js";
 
 export interface RecorderConfig {
+  publicKey: string;
   lookbackMs: number;
   retentionMs: number;
   sessionId: string;
@@ -54,7 +56,14 @@ interface Generation {
   bytes: number;
 }
 
-function buildNetworkPlugin(cfg: RecorderConfig): RecordPlugin {
+const toEpoch = (relative: number): number => Math.round(performance.timeOrigin + relative);
+
+const epochTimes = (request: NetworkRequest): Pick<NetworkRequest, "startTime" | "endTime"> => ({
+  ...(request.startTime === undefined ? {} : { startTime: toEpoch(request.startTime) }),
+  ...(request.endTime === undefined ? {} : { endTime: toEpoch(request.endTime) }),
+});
+
+function buildNetworkPlugin(cfg: RecorderConfig, ledger: MethodLedger): RecordPlugin {
   // Never record our own traffic. Without this the ingest POST - which carries
   // the entire replay - shows up inside the next replay, and each report is
   // meaningfully larger than the one before it. The path-not-origin reasoning
@@ -75,7 +84,12 @@ function buildNetworkPlugin(cfg: RecorderConfig): RecordPlugin {
       const url = typeof request.name === "string" ? request.name : "";
       if (url !== "" && matchesAny(url, ignore)) return undefined;
 
-      const out: NetworkRequest = { ...request, name: redactUrl(url) };
+      const out: NetworkRequest = {
+        ...request,
+        ...epochTimes(request),
+        name: redactUrl(url),
+        method: request.method ?? ledger.take(url, request.startTime ?? performance.now()),
+      };
 
       if (wantHeaders) {
         for (const slot of ["requestHeaders", "responseHeaders"] as const) {
@@ -152,7 +166,7 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
     }
   };
 
-  const persist = (): void => {
+  const commit = (): StoredChunk[] => {
     window.clearTimeout(timer);
     timer = undefined;
     const chunks: StoredChunk[] = [];
@@ -168,14 +182,21 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
     prune();
     const live = new Set(generations.map((g) => g.id));
     const drops: DroppedGeneration[] = dropped.map((gen) => ({ tab: sessionId, gen }));
+    const kept = chunks.filter((chunk) => live.has(chunk.gen));
     dropped = [];
-    void store?.write(chunks.filter((chunk) => live.has(chunk.gen)), drops).catch(() => {
+    void store?.write(kept, drops).catch(() => {
       store = null;
     });
+    return kept;
+  };
+
+  const hide = (): void => {
+    const kept = commit();
+    if (store !== null && kept.length > 0) spill(cfg.publicKey, kept);
   };
 
   const schedule = (): void => {
-    if (timer === undefined && !stopped) timer = window.setTimeout(persist, PERSIST_THROTTLE_MS);
+    if (timer === undefined && !stopped) timer = window.setTimeout(commit, PERSIST_THROTTLE_MS);
   };
 
   const plugins: RecordPlugin[] = [];
@@ -192,7 +213,8 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
       }),
     );
   }
-  if (cfg.network.enabled) plugins.push(buildNetworkPlugin(cfg));
+  const ledger = cfg.network.enabled ? startMethodLedger() : null;
+  if (ledger !== null) plugins.push(buildNetworkPlugin(cfg, ledger));
 
   // `listenerHandler` is internal to rrweb, so the stop handle is typed by
   // what `record` actually returns.
@@ -208,7 +230,7 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
     checkoutEveryNms: checkoutMs,
     maskAllInputs: cfg.replay.maskAllInputs ?? true,
     maskTextSelector: maskTextSelector(cfg.replay.maskTextSelector),
-    blockSelector: blockSelector(cfg.replay.blockSelector),
+    blockSelector: [blockSelector(cfg.replay.blockSelector), WIDGET_HOST_SELECTOR].join(","),
     recordCanvas: false,
     collectFonts: false,
     inlineImages: false,
@@ -230,7 +252,10 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
   const attach = async (): Promise<void> => {
     const opened = await openStore();
     if (opened === null) return;
-    await opened.purge(Date.now() - cfg.retentionMs);
+    const since = Date.now() - cfg.retentionMs;
+    await opened.purge(since);
+    await opened.write(readSpill(cfg.publicKey).filter((chunk) => chunk.tab === sessionId && chunk.at >= since), []);
+    clearSpill(cfg.publicKey);
     const chunks = await opened.load(sessionId);
     if (stopped) return opened.clear(sessionId);
     store = opened;
@@ -240,7 +265,7 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
     store = null;
   });
 
-  window.addEventListener("pagehide", persist);
+  window.addEventListener("pagehide", hide);
 
   const filled = (): Generation[] => generations.filter((g) => g.events.length > 0);
 
@@ -271,7 +296,9 @@ export function startRecorder(cfg: RecorderConfig): Recorder {
       stopped = true;
       if (stopFn) stopFn();
       window.clearTimeout(timer);
-      window.removeEventListener("pagehide", persist);
+      window.removeEventListener("pagehide", hide);
+      ledger?.stop();
+      clearSpill(cfg.publicKey);
       generations = [newGeneration()];
       void store?.clear(sessionId).catch(() => undefined);
       store = null;

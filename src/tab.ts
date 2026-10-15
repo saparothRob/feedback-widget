@@ -3,7 +3,7 @@ const SESSION_ID_BYTES = 16;
 const HEX_RADIX = 16;
 const HEX_WIDTH = 2;
 
-export const SLOTS = { session: "session", trail: "trail" } as const;
+export const SLOTS = { session: "session", trail: "trail", spill: "replay-spill" } as const;
 export type Slot = (typeof SLOTS)[keyof typeof SLOTS];
 
 const keyOf = (publicKey: string, slot: Slot): string => `${STORAGE_PREFIX}:${publicKey}:${slot}`;

@@ -9,6 +9,7 @@
  * disagree about what counts as a console line.
  */
 import type { ConsoleEntry, NetworkEntry, WireEvent } from "./wire.js";
+import { DEFAULT_METHOD } from "./requests.js";
 
 /** Plugin identifiers as rrweb writes them into `event.data.plugin`. Exported
  *  so the react-native taps, which synthesise these events without rrweb, can
@@ -19,6 +20,9 @@ export const NETWORK_PLUGIN = "rrweb/network@1";
 /** rrweb's `EventType.Plugin`, mirrored as a literal so this module - and the
  *  react-native entry that shares it - never has to import rrweb for one enum. */
 export const PLUGIN_EVENT_TYPE = 6;
+
+const DEFAULT_LEVEL = "log";
+const EPOCH_FLOOR_MS = Date.UTC(2001, 0, 1);
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -34,6 +38,17 @@ function num(value: unknown, fallback: number | null): number | null {
 
 function str(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function epoch(value: unknown, fallback: number): number {
+  const stamp = num(value, null);
+  return stamp !== null && stamp >= EPOCH_FLOOR_MS ? stamp : fallback;
+}
+
+function span(start: unknown, end: unknown): number | null {
+  const from = num(start, null);
+  const to = num(end, null);
+  return from === null || to === null ? null : to - from;
 }
 
 export interface Extracted {
@@ -54,7 +69,7 @@ export function extractConsoleAndNetwork(events: WireEvent[]): Extracted {
     if (plugin === CONSOLE_PLUGIN) {
       consoleEntries.push({
         ts: event.ts,
-        level: str(payload.level, "log"),
+        level: str(payload.level, DEFAULT_LEVEL),
         args: toStringArray(payload.payload),
         trace: toStringArray(payload.trace),
       });
@@ -65,14 +80,12 @@ export function extractConsoleAndNetwork(events: WireEvent[]): Extracted {
       const requests = Array.isArray(payload.requests) ? payload.requests : [];
       for (const raw of requests) {
         if (!isRecord(raw)) continue;
-        const start = num(raw.startTime, event.ts) ?? event.ts;
-        const end = num(raw.endTime, null);
         networkEntries.push({
-          ts: start,
+          ts: epoch(raw.startTime, event.ts),
           url: str(raw.name, ""),
-          method: str(raw.method, "GET").toUpperCase(),
+          method: str(raw.method, DEFAULT_METHOD).toUpperCase(),
           status: num(raw.status, null),
-          duration: num(raw.duration, end === null ? null : end - start),
+          duration: num(raw.duration, span(raw.startTime, raw.endTime)),
           initiator: typeof raw.initiatorType === "string" ? raw.initiatorType : null,
         });
       }

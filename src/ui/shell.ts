@@ -11,6 +11,7 @@ import type { ButtonShape, ResolvedConfig, ThemeOptions } from "../types.js";
 import { contrastOn, el, svg } from "./dom.js";
 import { ICON_PATHS } from "./icons.js";
 import { STYLES } from "./styles.js";
+import { WIDGET_HOST_ATTR } from "../redact.js";
 
 export interface Shell {
   readonly host: HTMLElement;
@@ -48,7 +49,7 @@ const ICON_SIZES: Record<ButtonShape, number> = {
 };
 
 export function createShell(config: ResolvedConfig, onLaunch: () => void): Shell {
-  const host = el("div", { "data-nerva-feedback": "" });
+  const host = el("div", { [WIDGET_HOST_ATTR]: "" });
   const shadow = host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");

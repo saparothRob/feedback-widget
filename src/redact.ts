@@ -69,6 +69,9 @@ export function redactedPath(raw: string, keepSearch: boolean): string {
 export const MASK_CLASS = "feedback-mask";
 export const BLOCK_CLASS = "feedback-block";
 
+export const WIDGET_HOST_ATTR = "data-nerva-feedback";
+export const WIDGET_HOST_SELECTOR = `[${WIDGET_HOST_ATTR}]`;
+
 /**
  * Default masking selector. `.feedback-mask` is the documented opt-in; the
  * `[data-feedback-mask]` attribute form exists for templates where adding a

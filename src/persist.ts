@@ -1,4 +1,5 @@
 import type { eventWithTime } from "rrweb";
+import { SLOTS, clearSlot, readSlot, writeSlot } from "./tab.js";
 
 export interface StoredChunk {
   tab: string;
@@ -94,3 +95,31 @@ export async function openStore(): Promise<ReplayStore | null> {
     return null;
   }
 }
+
+const isStoredChunk = (value: unknown): value is StoredChunk => {
+  const chunk = value as Partial<StoredChunk> | null;
+  return (
+    typeof chunk === "object" &&
+    chunk !== null &&
+    typeof chunk.tab === "string" &&
+    typeof chunk.gen === "number" &&
+    typeof chunk.part === "number" &&
+    typeof chunk.at === "number" &&
+    typeof chunk.bytes === "number" &&
+    Array.isArray(chunk.events)
+  );
+};
+
+export const spill = (publicKey: string, chunks: StoredChunk[]): boolean =>
+  writeSlot(publicKey, SLOTS.spill, JSON.stringify([...readSpill(publicKey), ...chunks]));
+
+export function readSpill(publicKey: string): StoredChunk[] {
+  try {
+    const parsed: unknown = JSON.parse(readSlot(publicKey, SLOTS.spill) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter(isStoredChunk) : [];
+  } catch {
+    return [];
+  }
+}
+
+export const clearSpill = (publicKey: string): boolean => clearSlot(publicKey, SLOTS.spill);

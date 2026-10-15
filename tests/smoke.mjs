@@ -30,9 +30,19 @@ const PERSIST_WAIT_MS = 2_600;
 const PREFILLED_EMAIL = "pre@example.com";
 const TYPED_EMAIL = "rep@example.com";
 const META = 4;
+const FULL_SNAPSHOT = 2;
+const PLUGIN = 6;
+const BEFORE_RELOAD_MARK = "logged before the reload";
+const CLOCK_TOLERANCE_MS = 5_000;
+const NETWORK_SETTLE_MS = 1_200;
+const WIDGET_MARKERS = ["fb-scope", "fb-launcher", "fb-panel", "data-nerva-feedback"];
+const HOST_MARKER = "host-button";
+const LOOKBACK_MS = 600_000;
 
 const ready = (page) => page.waitForFunction(() => window.__ready === true, null, { timeout: 20_000 });
 const errorCount = (text) => Number((/(\d+) errors?/.exec(text ?? "") ?? [])[1] ?? NaN);
+const widgetLeaks = (events) => WIDGET_MARKERS.filter((marker) => JSON.stringify(events).includes(marker));
+const snapshotOf = (events) => events.find((e) => e.type === FULL_SNAPSHOT);
 const isIso = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value)) && value.endsWith("Z");
 
 async function run(mode) {
@@ -58,13 +68,21 @@ async function run(mode) {
     await ready(page);
 
     let sessionBeforeReload = null;
+    let postedAt = 0;
     if (mode === "legacy") {
       await page.waitForTimeout(PERSIST_WAIT_MS);
       sessionBeforeReload = await page.evaluate((key) => sessionStorage.getItem(key), SESSION_KEY);
+      await page.evaluate((mark) => console.error(mark), BEFORE_RELOAD_MARK);
       await page.reload({ waitUntil: "networkidle" });
       await ready(page);
       const after = await page.evaluate((key) => sessionStorage.getItem(key), SESSION_KEY);
       check("session id survives a reload in the same tab", sessionBeforeReload !== null && after === sessionBeforeReload, `${sessionBeforeReload} -> ${after}`);
+      postedAt = await page.evaluate(async () => {
+        const at = Date.now();
+        await fetch("/boom", { method: "POST", body: "{}" }).catch(() => undefined);
+        return at;
+      });
+      await page.waitForTimeout(NETWORK_SETTLE_MS);
     }
 
     const transport = await page.evaluate(() => window.__transport);
@@ -189,6 +207,8 @@ async function run(mode) {
       check("recorded a replay", events.length > 2, `${events.length} events`);
       check("seq is dense and ordered", events.every((e, i) => e.seq === i));
       check("replay opens with a full snapshot", events[0]?.type === 4 && events[1]?.type === 2, `types ${events[0]?.type},${events[1]?.type}`);
+      check("full snapshot still records the host page", JSON.stringify(snapshotOf(events) ?? {}).includes(HOST_MARKER));
+      check("replay records none of the widget's own UI", widgetLeaks(events.filter((e) => e.type !== PLUGIN)).length === 0, JSON.stringify(widgetLeaks(events)));
 
       const plugins = events.filter((e) => e.type === 6);
       const consoleEvents = plugins.filter((e) => e.data?.plugin === "rrweb/console@1");
@@ -221,6 +241,17 @@ async function run(mode) {
       check("split console out of the replay", consoleLogs.length > 0);
       check("split network out of the replay", network.length > 0);
       check("dropped plugin events from the playable stream", events.every((e) => e.type !== 6));
+      check("full snapshot still records the host page", JSON.stringify(snapshotOf(events) ?? {}).includes(HOST_MARKER));
+      check("replay records none of the widget's own UI", widgetLeaks(events).length === 0, JSON.stringify(widgetLeaks(events)));
+
+      const marked = consoleLogs.filter((e) => e.args.some((arg) => arg.includes(BEFORE_RELOAD_MARK)));
+      check("console output from before the reload reaches consoleLogs exactly once", marked.length === 1, `${marked.length} entries`);
+      check("console entries carry epoch-ms timestamps", consoleLogs.every((e) => Math.abs(e.ts - postedAt) < LOOKBACK_MS), JSON.stringify(consoleLogs.map((e) => e.ts)));
+      const posted = network.filter((e) => e.url.includes("/boom") && e.method === "POST");
+      check("network log records the real method of a failing POST", posted.length === 1, JSON.stringify(network.map((e) => `${e.method} ${e.url}`)));
+      check("network entry ts is epoch ms on the wall clock", posted.length === 1 && Math.abs(posted[0].ts - postedAt) < CLOCK_TOLERANCE_MS, `${posted[0]?.ts} vs ${postedAt}`);
+      check("every network entry ts is epoch ms", network.every((e) => Math.abs(e.ts - postedAt) < LOOKBACK_MS), JSON.stringify(network.map((e) => e.ts)));
+      check("GET requests keep their method", network.some((e) => e.url.includes("/another/host/call") && e.method === "GET"), JSON.stringify(network.map((e) => `${e.method} ${e.url}`)));
       check("carried the session key into the item", item?.body?.sessionKey === session?.body?.sessionKey);
       check("parked the session key in metadata too", JSON.parse(item?.body?.metadata ?? "{}").sessionKey === session?.body?.sessionKey);
 
