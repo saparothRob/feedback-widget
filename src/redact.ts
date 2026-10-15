@@ -56,6 +56,15 @@ export function redactUrl(raw: string): string {
   }
 }
 
+export function redactedPath(raw: string, keepSearch: boolean): string {
+  try {
+    const url = new URL(redactUrl(raw), typeof location !== "undefined" ? location.href : undefined);
+    return keepSearch ? `${url.pathname}${url.search}` : url.pathname;
+  } catch {
+    return raw;
+  }
+}
+
 /** The opt-in class a host app puts on anything that must not be recorded. */
 export const MASK_CLASS = "feedback-mask";
 export const BLOCK_CLASS = "feedback-block";

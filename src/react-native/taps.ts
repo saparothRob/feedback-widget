@@ -16,6 +16,8 @@ import type { WireEvent } from "../wire.js";
 import { ingestIgnoreList } from "../wire.js";
 import { CONSOLE_PLUGIN, NETWORK_PLUGIN, PLUGIN_EVENT_TYPE } from "../extract.js";
 import { redactUrl } from "../redact.js";
+import { matchesAny, methodOf, urlOf } from "../requests.js";
+import { errorEntry, failedRequestEntry, isFailedStatus, type TrailSink } from "../trail.js";
 
 export interface Tap {
   /** Snapshot the buffer as plugin events. `seq` is assigned by the caller. */
@@ -28,7 +30,6 @@ export interface Tap {
 const CONSOLE_BUFFER_LIMIT = 200;
 const CONSOLE_ARG_LIMIT = 1_000;
 const NETWORK_BUFFER_LIMIT = 200;
-const DEFAULT_METHOD = "GET";
 
 /** What the rrweb network plugin reports for fetch traffic; mirrored on the wire. */
 const FETCH_INITIATOR = "fetch";
@@ -61,6 +62,16 @@ const CONSOLE_LEVELS = ["log", "info", "warn", "error"] as const;
 type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
 type ConsoleMethod = (...args: unknown[]) => void;
 
+const ignoreTrail: TrailSink = () => undefined;
+const untrailed = (): void => undefined;
+
+const TRAIL_BY_LEVEL: Record<ConsoleLevel, (trail: TrailSink, ts: number, message: string) => void> = {
+  log: untrailed,
+  info: untrailed,
+  warn: untrailed,
+  error: (trail, ts, message) => trail(errorEntry(ts, message)),
+};
+
 interface ConsoleRecord extends Stamped {
   level: string;
   args: string[];
@@ -85,7 +96,7 @@ const consoleEvent = (record: ConsoleRecord): WireEvent => ({
   },
 });
 
-export function tapConsole(lookbackMs: number): Tap {
+export function tapConsole(lookbackMs: number, trail: TrailSink = ignoreTrail): Tap {
   const buffer = ringBuffer<ConsoleRecord>(CONSOLE_BUFFER_LIMIT, lookbackMs);
   const host: Record<ConsoleLevel, ConsoleMethod> = console;
   const originals = new Map<ConsoleLevel, ConsoleMethod>();
@@ -95,7 +106,9 @@ export function tapConsole(lookbackMs: number): Tap {
     originals.set(level, original);
     host[level] = (...args: unknown[]): void => {
       try {
-        buffer.push({ ts: Date.now(), level, args: args.map(stringifyArg) });
+        const record = { ts: Date.now(), level, args: args.map(stringifyArg) };
+        buffer.push(record);
+        TRAIL_BY_LEVEL[level](trail, record.ts, record.args.join(" "));
       } catch {
         /* a full or hostile arg must not cost the app its console */
       }
@@ -124,16 +137,8 @@ export interface FetchTapOptions {
   endpoint: string;
   ignoreUrls: (string | RegExp)[];
   lookbackMs: number;
+  trail?: TrailSink;
 }
-
-const matchesAny = (url: string, patterns: (string | RegExp)[]): boolean =>
-  patterns.some((p) => (typeof p === "string" ? url.includes(p) : p.test(url)));
-
-const urlOf = (input: RequestInfo | URL): string =>
-  typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-
-const methodOf = (input: RequestInfo | URL, init: RequestInit | undefined): string =>
-  (init?.method ?? (typeof input === "object" && "method" in input ? input.method : DEFAULT_METHOD)).toUpperCase();
 
 const networkEvent = (record: NetworkRecord): WireEvent => ({
   seq: PLACEHOLDER_SEQ,
@@ -161,11 +166,13 @@ export function tapFetch(opts: FetchTapOptions): Tap {
   const ignore = ingestIgnoreList(opts.endpoint, opts.ignoreUrls);
   const buffer = ringBuffer<NetworkRecord>(NETWORK_BUFFER_LIMIT, opts.lookbackMs);
   const original = globalThis.fetch;
+  const trail = opts.trail ?? ignoreTrail;
 
   const push = (ts: number, url: string, method: string, status: number | null): void => {
     try {
       if (url === "" || matchesAny(url, ignore)) return;
       buffer.push({ ts, url: redactUrl(url), method, status, duration: Date.now() - ts });
+      if (isFailedStatus(status)) trail(failedRequestEntry(ts, method, url, status));
     } catch {
       /* a recording fault must never surface as a network error */
     }

@@ -201,6 +201,46 @@ it.
 
 ---
 
+## 6a. Feedback Rewind fields (widget 0.4)
+
+Config — both routes, camelCase on the legacy one, snake_case on v1:
+
+| Key | Default | Clamp | Meaning |
+|---|---|---|---|
+| `replayLookbackSeconds` / `replay_lookback_seconds` | 600 (was 60) | 5–3600 | replay history kept on the device |
+| `trailSeconds` / `trail_seconds` | 1800 | 60–7200 | trail history kept on the device |
+| `requireEmail` / `require_email` | `false` | — | the widget always shows and requires the email field |
+
+Ingest (legacy):
+
+- `POST /api/feedback-collect/session` (`@SessionIngest`) gains `trail` — a
+  JSON-encoded `TrailEntry[]`, the same string-for-jsonb pattern as `events`,
+  `consoleLogs` and `networkLogs`. Store it in `feedback_sessions.trail jsonb`.
+  The session is now posted whenever replay is on **or** the trail is non-empty,
+  and its `sessionKey` is stable per browser tab across reloads, so ingest must
+  upsert on it.
+- `POST /api/feedback-collect/item` (`@FeedbackItemCreate`) gains `momentAt` —
+  an ISO-8601 UTC string: the latest error / failed request in the sent window
+  (falling back to the latest rage-click), or the send time. Store it in
+  `feedback_items.moment_at timestamptz`.
+- With `requireEmail` on, reject an item with a blank `userEmail`:
+  `400 { "error": "email_required" }`. The widget validates first, so this is
+  the backstop, not the UX.
+
+```ts
+type TrailEntry = { ts: number; kind: "nav" | "click" | "error" | "failed-request" | "rage-click"; label: string; detail?: string };
+```
+
+`failed-request` labels read `METHOD /path → status` (or `→ failed` for a
+network failure) with the full redacted URL in `detail`; `nav` labels are the
+redacted path and query, `detail` is the trigger (`load`, `push`, `replace`,
+`pop`, `hash`).
+
+The v1 submission carries the same data as `moment_at` (ISO string) and `trail`
+(a real array, not a string).
+
+---
+
 ## 7. What v1 would need — not built
 
 The v1 transport is written against this contract and exercised by `npm test`,

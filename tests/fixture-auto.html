@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>feedback-widget auto-mount fixture</title>
+</head>
+<body>
+  <h1>Auto-mounted host page</h1>
+  <script>
+    var script = document.createElement("script");
+    script.src = "/dist/global.iife.js";
+    script.dataset.endpoint = location.origin;
+    script.dataset.key = "test_key_123";
+    script.addEventListener("load", function () {
+      window.NervaFeedback.identify({ id: "u-early", email: "early@example.com", name: "Early Bird" });
+      window.__loaded = true;
+    });
+    document.body.appendChild(script);
+  </script>
+</body>
+</html>

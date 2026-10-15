@@ -107,10 +107,52 @@ needs from the server, and which parts of it Nerva implements today.
 A widget that lives as long as a tab cannot keep every event, and a naive "drop
 anything older than N seconds" queue eventually drops the full snapshot the
 replay is built from, leaving an unplayable tail. So the recorder uses rrweb's
-own checkout mechanism: a fresh full snapshot every `lookbackMs`, two
-generations kept, the older one dropped when a third arrives. Memory stays inside
-`[lookback, 2 x lookback)` and whatever gets flushed always begins with a
-Meta + FullSnapshot pair.
+own checkout mechanism: a fresh full snapshot every 60 seconds (or every
+`lookbackMs`, if that is shorter), `ceil(lookback / checkout) + 1` generations
+kept, and the oldest dropped first — by count, by age, and by a ~5 MB byte cap.
+Whatever gets flushed always begins with a Meta + FullSnapshot pair.
+
+The generations are mirrored into IndexedDB under a per-tab session id (kept in
+`sessionStorage`), in batches written at most every two seconds and on
+`pagehide`, so a reload in the same tab resumes the history and the server
+upserts one session. Entries older than the trail length are purged at start;
+`destroy()` deletes the tab's data. Where IndexedDB or `sessionStorage` is
+unavailable or throws (private mode, storage-blocked iframes), the buffer stays
+in memory exactly as before and nothing surfaces to the host page.
+
+A browser's "Duplicate tab" copies `sessionStorage`, so the copy would inherit
+the original's session id and both tabs would write the same replay and session
+keys. At mount the widget asks the other tabs of its origin, over a
+`BroadcastChannel`, whether any of them still holds the inherited id; a live
+holder answers and the newcomer mints a fresh id. A reload answers to nobody
+(the old document is gone), so the original tab keeps its id. The handshake runs
+alongside the config fetch, so it adds no latency. Without `BroadcastChannel` the
+widget keeps the inherited id, which is the pre-0.4 behaviour.
+
+When a report is sent for a shorter window ("Send the last 5 min"), the replay
+starts at the generation boundary at or before the cut, so it stays playable.
+
+### The trail
+
+Alongside the replay the widget keeps a small trail per tab (default 30 minutes,
+server `trailSeconds`, clamped 60–7200): `nav` (initial load, `pushState`,
+`replaceState`, `popstate`, `hashchange`), `click` (the target's accessible name
+or text, capped at 80 characters; masked and blocked elements read `[private]`,
+and input values are never read), `error` (`window` errors, unhandled
+rejections, `console.error`), `failed-request` (`fetch` / XHR with status ≥ 500
+or a network failure; the widget's own ingest routes are ignored) and
+`rage-click` (three clicks on the same element within a second). URLs are
+redacted the same way recorded URLs are. The trail persists in `sessionStorage`.
+
+```ts
+type TrailEntry = { ts: number; kind: "nav" | "click" | "error" | "failed-request" | "rage-click"; label: string; detail?: string };
+```
+
+Errors, failed requests and rage-clicks are **moments**. A report carries
+`momentAt`: the latest error or failed request inside the sent window (falling
+back to the latest rage-click), or the send time when nothing went wrong — so
+triage can cue the replay to the moment it broke. The form shows that moment in
+its "We noticed" line.
 
 `seq` is assigned at flush time and the server orders by it. rrweb backdates
 events when it merges a snapshot, so `ts` is not a stable ordering and must never
@@ -122,9 +164,10 @@ be used as one.
 
 This is the part to read before shipping it.
 
-**Nothing leaves the browser unless someone files a report.** The replay lives in
-a rolling in-memory buffer and is uploaded at submit time. A visitor who never
-clicks the button never sends anything. (`replay.uploadMode: "continuous"` opts
+**Nothing leaves the browser unless someone files a report.** The replay and the
+trail live in a rolling on-device buffer (IndexedDB / `sessionStorage`, scoped to
+the tab, expired after the trail length, deleted on `destroy()`) and are uploaded
+at submit time. A visitor who never clicks the button never sends anything. (`replay.uploadMode: "continuous"` opts
 into always-on session upload on the legacy contract; it is off by default.)
 
 **Redaction happens at capture time, not at send time.** A value that was never
@@ -149,8 +192,14 @@ entirely:
 <span class="feedback-mask">4111 1111 1111 1111</span>
 ```
 
-The modal tells the person submitting what they are about to share. Do not remove
-that line without replacing it with something equally clear.
+The modal tells the person submitting what they are about to share — a counted
+"Sharing" line (`N min replay · N pages · N errors · N failed requests`) that
+recounts as they trim the window, plus one masking sentence. Do not remove that
+line without replacing it with something equally clear.
+
+With replay on, the screenshot toggle defaults to off: the replay frame at
+`momentAt` is the evidence, and a screenshot taken at Send shows the page after
+the fact. It defaults to on when replay is off.
 
 ---
 
@@ -165,10 +214,12 @@ that line without replacing it with something equally clear.
 | `theme` | server | `accent`, `icon`, `position`, `buttonLabel`, `buttonShape`, `buttonPulse`, `skin`, `colorScheme`, `radius`, `brandName`, `brandLogo`, `successMessage`, `loadFonts` |
 | `kinds` | server | must be a subset the server accepts |
 | `screenshot` | `"dom"` | `"dom"` needs the `html2canvas` peer; `"none"` hides the toggle |
-| `collectEmail` | `true` | ignored when `user.email` is set |
+| `collectEmail` | `true` | shows the email field; prefilled (still editable) from `user.email` |
+| `requireEmail` | server (`false`) | always shows the email field and blocks Send without a valid address |
+| `trailSeconds` | server (1800) | trail length, clamped 60–7200 |
 | `attachments` | `true` | v1 only |
 | `replay.enabled` | `true` | |
-| `replay.lookbackMs` | server (60s) | |
+| `replay.lookbackMs` | server (600s) | the trim options (10 / 5 / 2 min) are derived from it |
 | `replay.uploadMode` | `"on-submit"` | `"continuous"` is legacy-only |
 | `replay.maskAllInputs` | `true` | |
 | `replay.maskTextSelector` | — | added to `.feedback-mask` |
@@ -185,11 +236,40 @@ that line without replacing it with something equally clear.
 ```ts
 feedback.open();
 feedback.close();
-feedback.identify({ id, email, name });   // after a login
+feedback.identify({ id, email, name });   // after a login; merges
+feedback.clearUser();                      // after a logout; forgets the user
 feedback.setMetadata({ route: "/billing" });
-feedback.destroy();                        // stops the recorder, removes the DOM
+feedback.setTheme({ colorScheme: "dark" }); // re-skins in place; the recorder keeps running
+feedback.destroy();                        // stops the recorder, deletes local data, removes the DOM
 feedback.transport;                        // "v1" | "legacy" | "none"
 ```
+
+Do not remount the widget to change its theme: a remount starts a new buffer.
+`setTheme` takes any subset of the `theme` options, validated the same way the
+server config is. The script-tag build also exposes
+`window.NervaFeedback.setTheme(theme)`, which applies to every widget it mounted.
+
+### Signed-in user on the script-tag build
+
+A host that embeds the auto-mounting script (`/api/feedback/widget.js?key=…`)
+never sees the handle, so the global carries the identity instead:
+
+```ts
+window.NervaFeedback?.identify({ id: user.id, email: user.email, name: user.name }); // login, session restore, profile change
+window.NervaFeedback?.identify(null);                                               // logout
+```
+
+`identify(user)` **replaces** the signed-in user on every widget the script
+mounted (a field left out is gone, it is not merged), and is remembered, so a
+widget that mounts later starts with that user. `identify(null)` signs out: every
+widget falls back to the `user` it was mounted with, which for the auto-mounted
+embed is nobody. The email field is prefilled from the identified user each time
+the form opens, so an identity that arrives after mount, or after the form was
+opened once, still prefills it, and a logout empties it.
+
+The global may not exist yet when the host's auth state settles. Call
+`identify` again from the script tag's `load` event, or keep the latest user and
+apply it there.
 
 A disabled widget mounts **no DOM at all** — not a hidden button, nothing — and
 returns an inert handle whose `transport` is `"none"`.
@@ -306,7 +386,8 @@ export const feedback = createFeedbackClient({
 ```
 
 After a login, `client.identify({ id, email, name })`; per-screen context goes
-through `client.setMetadata({ ... })` - both merge, like the web handle.
+through `client.setMetadata({ ... })` - both merge, like the web handle. After a
+logout, `client.clearUser()`; to switch users, `clearUser()` then `identify(next)`.
 
 ### Screenshots
 
@@ -336,6 +417,11 @@ const client = await createFeedbackClient({
   `destroy()`), honouring the server's capture toggles and the same
   non-configurable URL redaction as the web recorder. Headers and bodies are
   never recorded on mobile.
+- **A trail, without navigation.** `console.error` calls and failed requests
+  (status ≥ 500 or a network failure) from those same taps become `error` and
+  `failed-request` trail entries, kept in memory for the trail length, and the
+  report carries `momentAt` exactly as on the web. Screen changes and taps are
+  not recorded.
 - **No automatic screenshots** - only what your `captureScreenshot` returns.
 - **No file attachments and no custom fields** (legacy contract limits, same as
   the web widget on that transport).

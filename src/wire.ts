@@ -42,6 +42,16 @@ export interface NetworkEntry {
   initiator: string | null;
 }
 
+export const TRAIL_KINDS = ["nav", "click", "error", "failed-request", "rage-click"] as const;
+export type TrailKind = (typeof TRAIL_KINDS)[number];
+
+export interface TrailEntry {
+  ts: number;
+  kind: TrailKind;
+  label: string;
+  detail?: string;
+}
+
 // ── legacy: POST /api/feedback-collect/session  (@SessionIngest) ─────────────
 
 export interface LegacySessionIngest {
@@ -60,6 +70,7 @@ export interface LegacySessionIngest {
   consoleLogs: string;
   /** JSON-encoded `NetworkEntry[]`. */
   networkLogs: string;
+  trail: string;
   durationSeconds: number | null;
 }
 
@@ -81,6 +92,7 @@ export interface LegacyItemCreate {
   screenshotData: string;
   /** JSON-encoded object. */
   metadata: string;
+  momentAt: string;
 }
 
 // ── legacy: GET /api/feedback-collect/config ─────────────────────────────────
@@ -101,6 +113,8 @@ export interface LegacyWidgetConfig {
   replayLookbackSeconds: number;
   collectEmail: boolean;
   kinds: string[];
+  requireEmail?: boolean;
+  trailSeconds?: number;
   skin?: string;
   colorScheme?: string;
   radius?: number;
@@ -143,6 +157,8 @@ export interface V1WidgetConfig {
   custom_fields: V1CustomField[];
   supports_replay_chunks?: boolean;
   kinds?: string[];
+  require_email?: boolean;
+  trail_seconds?: number;
   skin?: string;
   color_scheme?: string;
   radius?: number;
@@ -171,6 +187,8 @@ export interface V1Submission {
   custom_fields: Record<string, unknown>;
   replay_pending?: boolean;
   replay_events: WireEvent[];
+  moment_at: string;
+  trail: TrailEntry[];
 }
 
 export interface V1IngestResponse {

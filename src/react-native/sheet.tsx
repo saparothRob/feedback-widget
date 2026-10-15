@@ -21,8 +21,8 @@ import {
 import type { ResolvedConfig } from "../types.js";
 import type { SubmitResult } from "../transport/index.js";
 import type { FeedbackClient } from "./client.js";
-import { COPY, KIND_HINTS, KIND_LABELS } from "../copy.js";
-import { DONE_DISMISS_MS, MAX_TITLE_LENGTH } from "../limits.js";
+import { COPY, EMAIL_COPY, KIND_HINTS, KIND_LABELS, emailMode } from "../copy.js";
+import { DONE_DISMISS_MS, EMAIL_PATTERN, MAX_TITLE_LENGTH } from "../limits.js";
 import { LEGACY_KINDS } from "../wire.js";
 import {
   PALETTES,
@@ -71,10 +71,10 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
     setKind(config.kinds[0] ?? LEGACY_KINDS[0]);
     setTitle("");
     setMessage("");
-    setEmail("");
+    setEmail(client.user.email ?? "");
     setError(null);
     setPhase("editing");
-  }, [visible, config.kinds]);
+  }, [visible, config.kinds, client]);
 
   useEffect(() => {
     if (phase !== "done") return;
@@ -85,7 +85,8 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
   if (!config.enabled) return null;
 
   const skin = SKIN_TRAITS[config.theme.skin];
-  const collectEmail = config.collectEmail && !client.user.email;
+  const emailShown = config.collectEmail || config.requireEmail;
+  const emailCopy = EMAIL_COPY[emailMode(config.requireEmail)];
   const sending = phase === "sending";
 
   const close = (): void => {
@@ -94,8 +95,13 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
 
   const send = (): void => {
     const trimmed = message.trim();
-    if (trimmed === "") {
-      setError(COPY.missingMessage);
+    const checks = [
+      { valid: trimmed !== "", message: COPY.missingMessage },
+      { valid: !config.requireEmail || EMAIL_PATTERN.test(email.trim()), message: COPY.missingEmail },
+    ];
+    const failed = checks.find((check) => !check.valid);
+    if (failed !== undefined) {
+      setError(failed.message);
       return;
     }
     setError(null);
@@ -103,9 +109,9 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
     client
       .submit({
         kind,
-        title: title.trim().slice(0, MAX_TITLE_LENGTH),
+        title,
         message: trimmed,
-        email: email.trim() || null,
+        email: (emailShown ? email.trim() : client.user.email) || null,
       })
       .then((result) => {
         setPhase("done");
@@ -167,9 +173,12 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
         />
       </View>
 
-      {collectEmail && (
+      {emailShown && (
         <View style={styles.field}>
-          <Text style={styles.label}>{COPY.emailLabel}</Text>
+          <Text style={styles.label}>
+            {emailCopy.label}
+            {config.requireEmail && <Text style={styles.required}> *</Text>}
+          </Text>
           <TextInput
             style={styles.inputControl}
             value={email}
@@ -181,7 +190,7 @@ export function FeedbackSheet({ client, visible, onClose, onSubmitted }: Feedbac
             autoCorrect={false}
             editable={!sending}
           />
-          <Text style={styles.hint}>{COPY.emailHint}</Text>
+          <Text style={styles.hint}>{emailCopy.hint}</Text>
         </View>
       )}
 

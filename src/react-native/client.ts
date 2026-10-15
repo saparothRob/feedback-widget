@@ -13,11 +13,13 @@
  */
 import type { FeedbackOptions, ResolvedConfig, UserHint } from "../types.js";
 import type { Draft, SubmitContext, SubmitResult } from "../transport/index.js";
-import type { WireEvent } from "../wire.js";
+import type { TrailEntry, WireEvent } from "../wire.js";
 import type { Tap } from "./taps.js";
 import { bootstrap, normaliseEndpoint } from "../config.js";
 import { selectTransport } from "../transport/index.js";
 import { tapConsole, tapFetch } from "./taps.js";
+import { createTrailBuffer, momentAt, within } from "../trail.js";
+import { fullWindow, titleFor } from "../share.js";
 import { DEFAULT_SCREEN_NAME, newSessionId, pageUrlFor, userAgent, viewport } from "./environment.js";
 
 declare const __WIDGET_VERSION__: string;
@@ -54,6 +56,7 @@ export interface FeedbackDraft {
 export interface FeedbackClient {
   submit(draft: FeedbackDraft): Promise<SubmitResult>;
   identify(user: UserHint): void;
+  clearUser(): void;
   setMetadata(metadata: Record<string, unknown>): void;
   /** Feed navigation changes here so reports name the right screen. */
   setScreen(name: string): void;
@@ -74,6 +77,7 @@ function inertClient(config: ResolvedConfig, user: UserHint): FeedbackClient {
   return {
     submit: () => Promise.resolve({ id: null }),
     identify: () => undefined,
+    clearUser: () => undefined,
     setMetadata: () => undefined,
     setScreen: () => undefined,
     destroy: () => undefined,
@@ -109,14 +113,16 @@ export async function createFeedbackClient(options: FeedbackClientOptions): Prom
   const transport = selectTransport(kind, { endpoint, publicKey: options.publicKey });
   const sessionId = newSessionId();
   const startedAt = Date.now();
+  const trail = createTrailBuffer(config.trailMs);
+  const sink = (entry: TrailEntry): void => trail.push(entry);
 
   // The taps install after the bootstrap fetches, so the widget's own config
   // probes never appear in the breadcrumbs - and the ignore list keeps its
   // ingest traffic out from here on.
   const taps: Tap[] = [
-    ...(config.capture.console ? [tapConsole(config.replay.lookbackMs)] : []),
+    ...(config.capture.console ? [tapConsole(config.replay.lookbackMs, sink)] : []),
     ...(config.capture.network
-      ? [tapFetch({ endpoint, ignoreUrls: options.network?.ignoreUrls ?? [], lookbackMs: config.replay.lookbackMs })]
+      ? [tapFetch({ endpoint, ignoreUrls: options.network?.ignoreUrls ?? [], lookbackMs: config.replay.lookbackMs, trail: sink })]
       : []),
   ];
 
@@ -129,10 +135,15 @@ export async function createFeedbackClient(options: FeedbackClientOptions): Prom
 
   const context = (): SubmitContext => {
     const { width, height } = viewport();
+    const now = Date.now();
+    const span = fullWindow(config);
+    const entries = trail.entries();
     return {
       sessionId,
       replayStartedAt: startedAt,
       events: breadcrumbs(),
+      trail: within(entries, span.trailMs, now),
+      momentAt: momentAt(entries, span.replayMs, now),
       user,
       metadata,
       pageUrl: pageUrlFor(screen),
@@ -150,17 +161,21 @@ export async function createFeedbackClient(options: FeedbackClientOptions): Prom
         draft.screenshot ?? (options.captureScreenshot ? await guardedScreenshot(options.captureScreenshot) : null);
       const wireDraft: Draft = {
         kind: draft.kind,
-        title: draft.title,
+        title: titleFor(draft.title, draft.message),
         message: draft.message,
         email: draft.email ?? null,
         answers: {},
         files: [],
         screenshot,
+        shareWindow: fullWindow(config),
       };
       return transport.submit(wireDraft, context());
     },
     identify(next: UserHint): void {
       user = { ...user, ...next };
+    },
+    clearUser(): void {
+      user = {};
     },
     setMetadata(next: Record<string, unknown>): void {
       metadata = { ...metadata, ...next };
@@ -171,6 +186,7 @@ export async function createFeedbackClient(options: FeedbackClientOptions): Prom
     destroy(): void {
       for (const tap of taps) tap.restore();
       taps.length = 0;
+      trail.clear();
     },
     config,
     transport: transport.kind,

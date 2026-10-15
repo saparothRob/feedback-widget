@@ -20,13 +20,16 @@
   <script>
     document.getElementById("host-button").addEventListener("click", function () {});
 
+    var params = new URLSearchParams(location.search);
+    var user = { id: "u-1", name: "Test Person" };
+    if (params.get("email")) user.email = params.get("email");
+
     window.__mounted = window.NervaFeedback.mount({
       endpoint: location.origin,
       publicKey: "test_key_123",
-      user: { id: "u-1", name: "Test Person" },
+      user: user,
       metadata: { release: "1.2.3" },
-      screenshot: "none",
-      replay: { lookbackMs: 60000 }
+      screenshot: "none"
     }).then(function (handle) {
       window.__handle = handle;
       window.__transport = handle.transport;
@@ -37,9 +40,12 @@
       console.warn("a warning too");
       document.getElementById("host-button").click();
       document.title = "changed after mount";
+      history.pushState({}, "", "/?view=two&token=SHOULD_BE_REDACTED" + (params.get("email") ? "&email=" + params.get("email") : ""));
+      console.error("fixture failure");
       return Promise.all([
         fetch("/some/host/api?token=SHOULD_BE_REDACTED").catch(function () {}),
-        fetch("/another/host/call").catch(function () {})
+        fetch("/another/host/call").catch(function () {}),
+        fetch("/boom").catch(function () {})
       ]);
     }).then(function () {
       // The network plugin batches through a PerformanceObserver; give it a beat

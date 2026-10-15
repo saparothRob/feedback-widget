@@ -16,7 +16,9 @@
 import type { FeedbackOptions, ResolvedConfig } from "./types.js";
 import type { LegacyWidgetConfig, V1CustomField, V1WidgetConfig } from "./wire.js";
 import { LEGACY_KINDS, V1_KINDS } from "./wire.js";
+import type { ThemeOptions } from "./types.js";
 import { getJsonOrNull } from "./transport/http.js";
+import { LOOKBACK_SECONDS, MS_PER_SECOND, TRAIL_SECONDS } from "./limits.js";
 
 export type TransportKind = "v1" | "legacy";
 
@@ -37,6 +39,7 @@ const SKINS = new Set(["nerva", "plain"]);
 const SCHEMES = new Set(["light", "dark", "auto"]);
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+const MAX_BUTTON_LABEL = 32;
 const MAX_BRAND_NAME = 40;
 const MAX_SUCCESS_MESSAGE = 200;
 const MAX_RADIUS = 24;
@@ -48,7 +51,6 @@ const DEFAULTS = {
   buttonLabel: "Feedback",
   buttonShape: "circle",
   buttonPulse: false,
-  lookbackSeconds: 60,
   skin: "nerva",
   colorScheme: "light",
   radius: 10,
@@ -63,10 +65,18 @@ function radiusOf(value: unknown, fallback: number): number {
     : fallback;
 }
 
+interface SecondsRange {
+  min: number;
+  max: number;
+  fallback: number;
+}
+
 /** Clamped the same way the server clamps it, so the two cannot disagree. */
-function lookbackMs(seconds: number | undefined): number {
-  const s = typeof seconds === "number" && seconds > 0 ? Math.min(3600, seconds) : DEFAULTS.lookbackSeconds;
-  return s * 1000;
+function clampedMs(seconds: number | undefined, range: SecondsRange): number {
+  const s = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
+    ? Math.max(range.min, Math.min(range.max, seconds))
+    : range.fallback;
+  return s * MS_PER_SECOND;
 }
 
 function pick<T extends string>(value: unknown, allowed: Set<string>, fallback: T): T {
@@ -87,7 +97,7 @@ function legacyConfig(remote: LegacyWidgetConfig | null, opts: FeedbackOptions):
       accent: theme.accent && HEX.test(theme.accent) ? theme.accent : remoteAccent,
       icon: theme.icon ?? pick(remote?.icon, ICONS, DEFAULTS.icon),
       position: theme.position ?? pick(remote?.position, POSITIONS, DEFAULTS.position),
-      buttonLabel: (theme.buttonLabel ?? remote?.buttonLabel ?? DEFAULTS.buttonLabel).slice(0, 32),
+      buttonLabel: (theme.buttonLabel ?? remote?.buttonLabel ?? DEFAULTS.buttonLabel).slice(0, MAX_BUTTON_LABEL),
       buttonShape: theme.buttonShape ?? pick(remote?.buttonShape, SHAPES, DEFAULTS.buttonShape),
       buttonPulse: theme.buttonPulse ?? remote?.buttonPulse === true,
       skin: theme.skin ?? pick(remote?.skin, SKINS, DEFAULTS.skin),
@@ -104,7 +114,7 @@ function legacyConfig(remote: LegacyWidgetConfig | null, opts: FeedbackOptions):
     },
     replay: {
       enabled: opts.replay?.enabled ?? true,
-      lookbackMs: opts.replay?.lookbackMs ?? lookbackMs(remote?.replayLookbackSeconds),
+      lookbackMs: opts.replay?.lookbackMs ?? clampedMs(remote?.replayLookbackSeconds, LOOKBACK_SECONDS),
     },
     kinds:
       opts.kinds ??
@@ -113,6 +123,8 @@ function legacyConfig(remote: LegacyWidgetConfig | null, opts: FeedbackOptions):
     // render and nothing that would survive the round trip if there were.
     customFields: [],
     collectEmail: opts.collectEmail ?? remote?.collectEmail !== false,
+    requireEmail: opts.requireEmail ?? remote?.requireEmail === true,
+    trailMs: clampedMs(opts.trailSeconds ?? remote?.trailSeconds, TRAIL_SECONDS),
     // `feedback_items` has no attachment table; files would have nowhere to land.
     attachments: false,
     supportsChunks: false,
@@ -146,7 +158,7 @@ function v1Config(remote: V1WidgetConfig, opts: FeedbackOptions): ResolvedConfig
       accent: theme.accent ?? (HEX.test(remote.accent_color ?? "") ? remote.accent_color : DEFAULTS.accent),
       icon: theme.icon ?? pick(remote.icon, ICONS, DEFAULTS.icon),
       position: theme.position ?? pick(remote.position, POSITIONS, DEFAULTS.position),
-      buttonLabel: (theme.buttonLabel ?? remote.button_label ?? DEFAULTS.buttonLabel).slice(0, 32),
+      buttonLabel: (theme.buttonLabel ?? remote.button_label ?? DEFAULTS.buttonLabel).slice(0, MAX_BUTTON_LABEL),
       buttonShape: theme.buttonShape ?? pick(remote.button_shape, SHAPES, DEFAULTS.buttonShape),
       buttonPulse: theme.buttonPulse ?? remote.button_pulse === true,
       skin: theme.skin ?? pick(remote.skin, SKINS, DEFAULTS.skin),
@@ -163,13 +175,36 @@ function v1Config(remote: V1WidgetConfig, opts: FeedbackOptions): ResolvedConfig
     },
     replay: {
       enabled: opts.replay?.enabled ?? true,
-      lookbackMs: opts.replay?.lookbackMs ?? lookbackMs(remote.replay_lookback_seconds),
+      lookbackMs: opts.replay?.lookbackMs ?? clampedMs(remote.replay_lookback_seconds, LOOKBACK_SECONDS),
     },
     kinds: opts.kinds ?? (Array.isArray(remote.kinds) && remote.kinds.length > 0 ? remote.kinds : [...V1_KINDS]),
     customFields: sanitiseFields(remote.custom_fields),
     collectEmail: opts.collectEmail ?? true,
+    requireEmail: opts.requireEmail ?? remote.require_email === true,
+    trailMs: clampedMs(opts.trailSeconds ?? remote.trail_seconds, TRAIL_SECONDS),
     attachments: opts.attachments ?? true,
     supportsChunks: remote.supports_replay_chunks === true,
+  };
+}
+
+const hexOr = (value: string | undefined, fallback: string): string =>
+  value !== undefined && HEX.test(value) ? value : fallback;
+
+export function mergeTheme(current: Required<ThemeOptions>, patch: Partial<ThemeOptions>): Required<ThemeOptions> {
+  return {
+    accent: hexOr(patch.accent, current.accent),
+    icon: pick(patch.icon, ICONS, current.icon),
+    position: pick(patch.position, POSITIONS, current.position),
+    buttonLabel: (patch.buttonLabel ?? current.buttonLabel).slice(0, MAX_BUTTON_LABEL),
+    buttonShape: pick(patch.buttonShape, SHAPES, current.buttonShape),
+    buttonPulse: patch.buttonPulse ?? current.buttonPulse,
+    skin: pick(patch.skin, SKINS, current.skin),
+    colorScheme: pick(patch.colorScheme, SCHEMES, current.colorScheme),
+    radius: radiusOf(patch.radius, current.radius),
+    brandName: (patch.brandName ?? current.brandName).slice(0, MAX_BRAND_NAME),
+    brandLogo: patch.brandLogo ?? current.brandLogo,
+    successMessage: (patch.successMessage ?? current.successMessage).slice(0, MAX_SUCCESS_MESSAGE),
+    loadFonts: patch.loadFonts ?? current.loadFonts,
   };
 }
 

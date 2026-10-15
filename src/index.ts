@@ -6,14 +6,20 @@
  *
  *   bootstrap  -> which server contract, and what the operator configured
  *   recorder   -> rrweb behind a bounded buffer, started immediately
+ *   trail      -> pages, clicks, errors and failed requests, kept per tab
  *   shell      -> one host element, one shadow root
  *   modal      -> the form
  *   transport  -> the only code that knows what the wire looks like
  */
-import type { FeedbackHandle, FeedbackOptions, OutgoingReport, UserHint } from "./types.js";
+import type { FeedbackHandle, FeedbackOptions, OutgoingReport, ThemeOptions, UserHint } from "./types.js";
 import type { Draft, SubmitContext, SubmitResult } from "./transport/index.js";
-import { bootstrap, normaliseEndpoint } from "./config.js";
+import type { ShareWindow } from "./share.js";
+import { bootstrap, mergeTheme, normaliseEndpoint } from "./config.js";
 import { startRecorder, type Recorder } from "./recorder.js";
+import { startTrail } from "./trail-web.js";
+import { momentAt, within } from "./trail.js";
+import { fullWindow, summarise } from "./share.js";
+import { SLOTS, claimTabSession, clearSlot } from "./tab.js";
 import { selectTransport } from "./transport/index.js";
 import { createShell } from "./ui/shell.js";
 import { createModal } from "./ui/modal.js";
@@ -29,7 +35,9 @@ function inertHandle(reason: string): FeedbackHandle {
     open: () => undefined,
     close: () => undefined,
     identify: () => undefined,
+    clearUser: () => undefined,
     setMetadata: () => undefined,
+    setTheme: () => undefined,
     destroy: () => undefined,
     transport: reason,
     version: VERSION,
@@ -42,22 +50,30 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
   if (!opts.endpoint) throw new Error("feedback-widget: endpoint is required");
 
   const endpoint = normaliseEndpoint(opts.endpoint);
-  const { transport: kind, config } = await bootstrap({ ...opts, endpoint });
+  const [{ transport: kind, config }, tab] = await Promise.all([bootstrap({ ...opts, endpoint }), claimTabSession(opts.publicKey)]);
 
   // A disabled widget mounts no DOM at all - not a hidden button, nothing. An
   // operator switching it off should be indistinguishable from never having
   // embedded it.
-  if (!config.enabled) return inertHandle("none");
+  if (!config.enabled) {
+    tab.release();
+    return inertHandle("none");
+  }
 
   let user: UserHint = { ...(opts.user ?? {}) };
   let metadata: Record<string, unknown> = { ...(opts.metadata ?? {}) };
 
   const transport = selectTransport(kind, { endpoint, publicKey: opts.publicKey });
 
+  const sessionId = tab.id;
+  const retentionMs = Math.max(config.trailMs, config.replay.lookbackMs);
+
   let recorder: Recorder | null = null;
   if (config.replay.enabled) {
     recorder = startRecorder({
       lookbackMs: config.replay.lookbackMs,
+      retentionMs,
+      sessionId,
       endpoint,
       replay: opts.replay ?? {},
       console: { ...(opts.console ?? {}), enabled: config.capture.console },
@@ -65,19 +81,35 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
     });
   }
 
-  const context = (): SubmitContext => ({
-    sessionId: recorder?.sessionId ?? "",
-    replayStartedAt: recorder?.startedAt() ?? null,
-    events: recorder?.flush() ?? [],
-    user,
-    metadata,
-    pageUrl: location.href,
-    referrer: document.referrer,
-    userAgent: navigator.userAgent,
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight,
-    config,
+  const trail = startTrail({
+    publicKey: opts.publicKey,
+    endpoint,
+    ttlMs: config.trailMs,
+    ignoreUrls: opts.network?.ignoreUrls ?? [],
+    ...(opts.replay?.maskTextSelector === undefined ? {} : { maskTextSelector: opts.replay.maskTextSelector }),
+    ...(opts.replay?.blockSelector === undefined ? {} : { blockSelector: opts.replay.blockSelector }),
   });
+
+  const context = (span: ShareWindow): SubmitContext => {
+    const now = Date.now();
+    const entries = trail.entries();
+    const events = recorder?.flush(span.replayMs) ?? [];
+    return {
+      sessionId,
+      replayStartedAt: events[0]?.ts ?? null,
+      events,
+      trail: within(entries, span.trailMs, now),
+      momentAt: momentAt(entries, span.replayMs, now),
+      user,
+      metadata,
+      pageUrl: location.href,
+      referrer: document.referrer,
+      userAgent: navigator.userAgent,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      config,
+    };
+  };
 
   const toReport = (draft: Draft, ctx: SubmitContext): OutgoingReport => ({
     kind: draft.kind,
@@ -96,6 +128,8 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
     replayStartedAt: ctx.replayStartedAt,
     replayEventCount: ctx.events.length,
     attachmentCount: draft.files.length,
+    momentAt: ctx.momentAt,
+    trailEntryCount: ctx.trail.length,
   });
 
   const shell = createShell(config, () => modal.open());
@@ -105,9 +139,14 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
     fieldsHost: { endpoint, publicKey: opts.publicKey },
     hostElement: shell.host,
     screenshotMode: opts.screenshot ?? "dom",
-    knownEmail: user.email ?? null,
+    knownEmail: () => user.email ?? null,
+    summarise: (span: ShareWindow) => {
+      const now = Date.now();
+      const started = recorder?.startedAt() ?? null;
+      return summarise(trail.entries(), span, now, started === null ? null : now - started);
+    },
     async submit(draft: Draft): Promise<SubmitResult> {
-      const ctx = context();
+      const ctx = context(draft.shareWindow);
 
       // `onBeforeSend` is the host app's last word. It sees a normalised report
       // regardless of which contract is about to carry it, and returning `false`
@@ -140,8 +179,8 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
   if (opts.replay?.uploadMode === "continuous" && transport.flushSession) {
     const flush = transport.flushSession.bind(transport);
     const interval = Math.max(MIN_FLUSH_MS, opts.replay.flushIntervalMs ?? DEFAULT_FLUSH_MS);
-    timer = window.setInterval(() => flush(context(), false), interval);
-    unloadHandler = () => flush(context(), true);
+    timer = window.setInterval(() => flush(context(fullWindow(config)), false), interval);
+    unloadHandler = () => flush(context(fullWindow(config)), true);
     // `pagehide` fires on the bfcache path where `beforeunload` does not.
     window.addEventListener("pagehide", unloadHandler);
   }
@@ -152,13 +191,24 @@ export async function mountFeedback(opts: FeedbackOptions): Promise<FeedbackHand
     identify: (next: UserHint) => {
       user = { ...user, ...next };
     },
+    clearUser: () => {
+      user = {};
+    },
     setMetadata: (next: Record<string, unknown>) => {
       metadata = { ...metadata, ...next };
+    },
+    setTheme: (theme: Partial<ThemeOptions>) => {
+      config.theme = mergeTheme(config.theme, theme);
+      shell.applyTheme(config.theme);
+      modal.applyTheme();
     },
     destroy: () => {
       if (timer !== undefined) window.clearInterval(timer);
       if (unloadHandler) window.removeEventListener("pagehide", unloadHandler);
+      trail.stop();
       recorder?.stop();
+      tab.release();
+      clearSlot(opts.publicKey, SLOTS.session);
       modal.close();
       shell.destroy();
     },
@@ -183,4 +233,4 @@ export type {
 export { FeedbackApiError } from "./transport/http.js";
 export { extractConsoleAndNetwork, playableEvents } from "./extract.js";
 export { MASK_CLASS, BLOCK_CLASS } from "./redact.js";
-export type { WireEvent, ConsoleEntry, NetworkEntry } from "./wire.js";
+export type { WireEvent, ConsoleEntry, NetworkEntry, TrailEntry, TrailKind } from "./wire.js";

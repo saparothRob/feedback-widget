@@ -6,6 +6,7 @@
  * that it is talking to the older contract.
  */
 import { createServer } from "node:http";
+import { gunzipSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 
@@ -28,7 +29,11 @@ export function startMockServer(mode) {
       new Promise((resolve) => {
         const chunks = [];
         req.on("data", (c) => chunks.push(c));
-        req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        req.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          const body = req.headers["content-encoding"] === "gzip" ? gunzipSync(raw) : raw;
+          resolve(body.toString("utf8"));
+        });
       });
 
     if (path === "/api/v1/feedback-widgets/by-key/test_key_123/config") {
@@ -45,6 +50,8 @@ export function startMockServer(mode) {
         capture_network: true,
         replay_lookback_seconds: 45,
         supports_replay_chunks: true,
+        require_email: false,
+        trail_seconds: 1800,
         custom_fields: [
           { key: "team", label: "Team", type: "select", required: true, options: ["Backend", "Frontend"], kinds: ["idea"] },
           { key: "steps", label: "Steps", type: "text", required: false, options: [], kinds: [] },
@@ -64,11 +71,15 @@ export function startMockServer(mode) {
         buttonPulse: false,
         captureConsole: true,
         captureNetwork: true,
-        replayLookbackSeconds: 30,
+        replayLookbackSeconds: 600,
         collectEmail: true,
+        requireEmail: true,
+        trailSeconds: 1800,
         kinds: ["bug", "idea", "praise"],
       });
     }
+
+    if (path === "/boom") return json(500, { error: "boom" });
 
     if (req.method === "POST") {
       return void readBody().then((raw) => {

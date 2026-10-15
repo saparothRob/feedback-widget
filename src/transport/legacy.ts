@@ -28,6 +28,8 @@ function safeKind(kind: string): string {
   return (LEGACY_KINDS as readonly string[]).includes(kind) ? kind : "feedback";
 }
 
+const hasSession = (ctx: SubmitContext): boolean => ctx.config.replay.enabled || ctx.trail.length > 0;
+
 function buildSession(ctx: SubmitContext): LegacySessionIngest {
   const events = ctx.config.replay.enabled ? ctx.events : [];
   const { console: consoleEntries, network } = extractConsoleAndNetwork(events);
@@ -49,6 +51,7 @@ function buildSession(ctx: SubmitContext): LegacySessionIngest {
     events: JSON.stringify(playableEvents(events)),
     consoleLogs: JSON.stringify(consoleEntries),
     networkLogs: JSON.stringify(network),
+    trail: JSON.stringify(ctx.trail),
     durationSeconds: started === null ? null : Math.max(0, Math.round((Date.now() - started) / 1000)),
   };
 }
@@ -61,7 +64,7 @@ export function createLegacyTransport(deps: TransportDeps): Transport {
     kind: "legacy",
 
     async submit(draft: Draft, ctx: SubmitContext): Promise<SubmitResult> {
-      if (ctx.config.replay.enabled) {
+      if (hasSession(ctx)) {
         // The replay is worth having even if it is the report that fails, and a
         // failed replay must not cost the report. Neither one blocks the other.
         try {
@@ -95,6 +98,7 @@ export function createLegacyTransport(deps: TransportDeps): Transport {
         userName: ctx.user.name ?? "",
         screenshotData: draft.screenshot ?? "",
         metadata: JSON.stringify(metadata),
+        momentAt: new Date(ctx.momentAt).toISOString(),
       };
 
       // The item route returns the created row, not `{ id }`. Read the id when
@@ -104,7 +108,7 @@ export function createLegacyTransport(deps: TransportDeps): Transport {
     },
 
     flushSession(ctx: SubmitContext, onUnload: boolean): void {
-      if (!ctx.config.replay.enabled) return;
+      if (!hasSession(ctx)) return;
       const body = buildSession(ctx);
       if (onUnload) {
         postOnUnload(sessionUrl, deps.publicKey, body);

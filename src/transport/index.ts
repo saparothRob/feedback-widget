@@ -7,7 +7,8 @@
  * nothing else.
  */
 import type { ResolvedConfig, UserHint } from "../types.js";
-import type { WireEvent } from "../wire.js";
+import type { TrailEntry, WireEvent } from "../wire.js";
+import type { ShareWindow } from "../share.js";
 import type { TransportKind } from "../config.js";
 import type { NamedBlob } from "./http.js";
 import { createV1Transport } from "./v1.js";
@@ -24,6 +25,7 @@ export interface Draft {
   answers: Record<string, unknown>;
   files: NamedBlob[];
   screenshot: string | null;
+  shareWindow: ShareWindow;
 }
 
 /** What the page and the recorder contribute. */
@@ -31,6 +33,8 @@ export interface SubmitContext {
   sessionId: string;
   replayStartedAt: number | null;
   events: WireEvent[];
+  trail: TrailEntry[];
+  momentAt: number;
   user: UserHint;
   metadata: Record<string, unknown>;
   pageUrl: string;

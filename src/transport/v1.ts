@@ -82,6 +82,8 @@ export function createV1Transport(deps: TransportDeps): Transport {
           ctx.replayStartedAt === null ? null : new Date(ctx.replayStartedAt).toISOString(),
         custom_fields: draft.answers,
         replay_events: chunked ? [] : events,
+        moment_at: new Date(ctx.momentAt).toISOString(),
+        trail: ctx.trail,
         ...(chunked ? { replay_pending: true } : {}),
       };
 

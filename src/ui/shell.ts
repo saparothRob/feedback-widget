@@ -7,7 +7,7 @@
  * important difference between a widget that survives arbitrary host apps and
  * one that works only on the page it was written against.
  */
-import type { ResolvedConfig } from "../types.js";
+import type { ButtonShape, ResolvedConfig, ThemeOptions } from "../types.js";
 import { contrastOn, el, svg } from "./dom.js";
 import { ICON_PATHS } from "./icons.js";
 import { STYLES } from "./styles.js";
@@ -18,6 +18,7 @@ export interface Shell {
   /** Where widget UI goes. Carries the reset and the design tokens. */
   readonly mount: HTMLElement;
   readonly launcher: HTMLButtonElement;
+  applyTheme(theme: Required<ThemeOptions>): void;
   destroy(): void;
 }
 
@@ -31,13 +32,20 @@ const FONTS_HREF =
  * and only when the nerva skin wants it. Hosts that forbid the request set
  * `theme.loadFonts: false` and the skin rides its system fallbacks.
  */
-function ensureFonts(config: ResolvedConfig): void {
-  const wanted = config.theme.skin === "nerva" && config.theme.loadFonts;
+function ensureFonts(theme: Required<ThemeOptions>): void {
+  const wanted = theme.skin === "nerva" && theme.loadFonts;
   if (!wanted || document.getElementById(FONTS_LINK_ID) !== null) return;
   document.head.append(
     el("link", { id: FONTS_LINK_ID, rel: "stylesheet", href: FONTS_HREF }),
   );
 }
+
+const CIRCLE_ICON_SIZE = 22;
+const PILL_ICON_SIZE = 18;
+const ICON_SIZES: Record<ButtonShape, number> = {
+  circle: CIRCLE_ICON_SIZE,
+  pill: PILL_ICON_SIZE,
+};
 
 export function createShell(config: ResolvedConfig, onLaunch: () => void): Shell {
   const host = el("div", { "data-nerva-feedback": "" });
@@ -47,36 +55,34 @@ export function createShell(config: ResolvedConfig, onLaunch: () => void): Shell
   style.textContent = STYLES;
   shadow.append(style);
 
-  const mount = el("div", {
-    class: "fb-scope",
-    "data-skin": config.theme.skin,
-    "data-scheme": config.theme.colorScheme,
-  });
+  const mount = el("div", { class: "fb-scope" });
   shadow.append(mount);
 
-  ensureFonts(config);
-
-  // Only the accent and geometry go inline, and they go on .fb-scope rather
-  // than the host element - an inline declaration outranks the stylesheet, so
-  // this survives the all:initial that .fb-scope carries.
-  const accent = config.theme.accent;
-  mount.style.setProperty("--fb-accent", accent);
-  mount.style.setProperty("--fb-on-accent", contrastOn(accent));
-  mount.style.setProperty("--fb-radius", `${config.theme.radius}px`);
-
-  const shape = config.theme.buttonShape;
-  const launcher = el("button", {
-    class: `fb-launcher ${shape} ${config.theme.position}${config.theme.buttonPulse ? " pulse" : ""}`,
-    type: "button",
-    "aria-haspopup": "dialog",
-    "aria-label": config.theme.buttonLabel,
-  }, [
-    svg(ICON_PATHS[config.theme.icon] ?? ICON_PATHS.chat ?? [], shape === "circle" ? 22 : 18),
-    el("span", { class: "fb-launcher-label", text: config.theme.buttonLabel }),
-  ]);
+  const launcher = el("button", { type: "button", "aria-haspopup": "dialog" });
   launcher.addEventListener("click", onLaunch);
   mount.append(launcher);
 
+  function applyTheme(theme: Required<ThemeOptions>): void {
+    mount.setAttribute("data-skin", theme.skin);
+    mount.setAttribute("data-scheme", theme.colorScheme);
+    ensureFonts(theme);
+
+    // Only the accent and geometry go inline, and they go on .fb-scope rather
+    // than the host element - an inline declaration outranks the stylesheet, so
+    // this survives the all:initial that .fb-scope carries.
+    mount.style.setProperty("--fb-accent", theme.accent);
+    mount.style.setProperty("--fb-on-accent", contrastOn(theme.accent));
+    mount.style.setProperty("--fb-radius", `${theme.radius}px`);
+
+    launcher.className = ["fb-launcher", theme.buttonShape, theme.position, ...(theme.buttonPulse ? ["pulse"] : [])].join(" ");
+    launcher.setAttribute("aria-label", theme.buttonLabel);
+    launcher.replaceChildren(
+      svg(ICON_PATHS[theme.icon] ?? ICON_PATHS.chat ?? [], ICON_SIZES[theme.buttonShape]),
+      el("span", { class: "fb-launcher-label", text: theme.buttonLabel }),
+    );
+  }
+
+  applyTheme(config.theme);
   document.body.append(host);
 
   return {
@@ -84,6 +90,7 @@ export function createShell(config: ResolvedConfig, onLaunch: () => void): Shell
     shadow,
     mount,
     launcher,
+    applyTheme,
     destroy(): void {
       host.remove();
     },

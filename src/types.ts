@@ -51,7 +51,7 @@ export interface UserHint {
 export interface ReplayOptions {
   enabled?: boolean;
   /**
-   * `"on-submit"` (default) keeps the replay in a rolling in-memory buffer and
+   * `"on-submit"` (default) keeps the replay in a rolling on-device buffer and
    * uploads it only when someone actually files a report - nothing about a
    * visitor who never clicks the button ever leaves their browser.
    *
@@ -113,6 +113,8 @@ export interface OutgoingReport {
   replayStartedAt: number | null;
   replayEventCount: number;
   attachmentCount: number;
+  momentAt: number;
+  trailEntryCount: number;
 }
 
 export interface FeedbackOptions {
@@ -134,8 +136,10 @@ export interface FeedbackOptions {
   kinds?: string[];
   /** `"dom"` needs the optional `html2canvas` peer; without it, manual attach only. */
   screenshot?: "dom" | "none";
-  /** Show the email input for anonymous submitters. Ignored when `user.email` is set. */
+  /** Show the email input. Prefilled, and still editable, when `user.email` is set. */
   collectEmail?: boolean;
+  requireEmail?: boolean;
+  trailSeconds?: number;
   /** Allow file attachments. Only reaches the server on the v1 transport. */
   attachments?: boolean;
 
@@ -149,7 +153,9 @@ export interface FeedbackHandle {
   open(): void;
   close(): void;
   identify(user: UserHint): void;
+  clearUser(): void;
   setMetadata(metadata: Record<string, unknown>): void;
+  setTheme(theme: Partial<ThemeOptions>): void;
   destroy(): void;
   /** `"v1"`, `"legacy"`, or `"none"` when the widget mounted nothing. */
   readonly transport: string;
@@ -165,6 +171,8 @@ export interface ResolvedConfig {
   kinds: string[];
   customFields: V1CustomField[];
   collectEmail: boolean;
+  requireEmail: boolean;
+  trailMs: number;
   attachments: boolean;
   supportsChunks: boolean;
 }

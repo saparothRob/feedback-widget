@@ -74,7 +74,7 @@ try {
   check("probe fell back to the legacy contract", client.transport === "legacy", client.transport);
   check("server config drives the theme", client.config.theme.buttonLabel === "Tell us", client.config.theme.buttonLabel);
   check("server config drives the kind list", client.config.kinds.length === 3, JSON.stringify(client.config.kinds));
-  check("server config drives the lookback", client.config.replay.lookbackMs === 30_000, client.config.replay.lookbackMs);
+  check("server config drives the lookback", client.config.replay.lookbackMs === 600_000, client.config.replay.lookbackMs);
   check("console tap is installed", console.log !== untappedLog);
   check("fetch tap is installed", globalThis.fetch !== untappedFetch);
 
@@ -82,6 +82,8 @@ try {
   console.log("mobile log line", { detail: 7 });
   await fetch(`${server.origin}/tests/fixture.html`);
   await fetch(`${server.origin}/anything?token=SHOULD_BE_REDACTED`);
+  await fetch(`${server.origin}/boom`);
+  console.error("mobile failure");
 
   client.identify({ name: "Mobbed" });
   client.setMetadata({ tab: "billing" });
@@ -122,10 +124,25 @@ try {
   check("host metadata reaches the item", JSON.parse(item?.body?.metadata ?? "{}").release === "9.9.9" && JSON.parse(item?.body?.metadata ?? "{}").tab === "billing");
   check("host-captured screenshot reaches the item", item?.body?.screenshotData === SCREENSHOT_DATA_URL);
 
+  check("session carries the trail as a JSON string", typeof session?.body?.trail === "string");
+  const trail = JSON.parse(session?.body?.trail ?? "[]");
+  check("trail records failed requests", trail.some((e) => e.kind === "failed-request" && e.label === "GET /boom → 500"), JSON.stringify(trail));
+  check("trail records console errors", trail.some((e) => e.kind === "error" && e.label.includes("mobile failure")), JSON.stringify(trail));
+  check("trail never records the widget's own traffic", !trail.some((e) => (e.detail ?? "").includes("/api/feedback-collect")));
+  const momentTs = Date.parse(item?.body?.momentAt ?? "");
+  check("item carries momentAt at the latest moment", trail.some((e) => e.ts === momentTs) && trail.every((e) => e.ts <= momentTs), item?.body?.momentAt);
+
   // A kind outside the legacy CHECK constraint must fall back, not 500.
   await client.submit({ kind: "nonsense", title: "", message: "Kind fallback check." });
   const second = server.received.filter((p) => p.path === "/api/feedback-collect/item")[1];
   check("unknown kind falls back to a value the CHECK accepts", second?.body?.itemType === "feedback", second?.body?.itemType);
+  check("blank title derives from the message", second?.body?.title === "Kind fallback check.", second?.body?.title);
+
+  client.clearUser();
+  check("clearUser forgets the signed-in user", Object.keys(client.user).length === 0, JSON.stringify(client.user));
+  await client.submit({ kind: "feedback", title: "", message: "Signed out." });
+  const signedOut = server.received.filter((p) => p.path === "/api/feedback-collect/item")[2];
+  check("a signed-out report carries no email", signedOut?.body?.userEmail === "", signedOut?.body?.userEmail);
 
   client.destroy();
   check("destroy restores console", console.log === untappedLog);
